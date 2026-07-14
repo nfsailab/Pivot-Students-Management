@@ -642,18 +642,6 @@ function StudentClient({ onSessionStateChange }) {
       return;
     }
 
-    // CONCURRENCY LOCK CHECK: Verify if this student is already logged in elsewhere
-    const doubleLoginPc = computers.find(
-      c => c.status === 'online' && 
-      c.currentUser?.toLowerCase() === selectedStudent.toLowerCase() &&
-      c.id !== selectedPC
-    );
-
-    if (doubleLoginPc) {
-      setConcurrencyError(`Access Denied: You already have an active login running on workstation ${doubleLoginPc.id}. Please logout from that workstation first.`);
-      return;
-    }
-
     // PC OCCUPANCY CHECK: Verify if the selected PC is already online
     const occupiedPc = computers.find(
       c => c.id === selectedPC && c.status === 'online'
@@ -893,7 +881,6 @@ function StudentClient({ onSessionStateChange }) {
                           key={i}
                           onClick={() => {
                             setSelectedTopicObj(t);
-                            setTodayWork(name || '');
                           }}
                           className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
                             isSelected
@@ -948,7 +935,6 @@ function StudentClient({ onSessionStateChange }) {
                           key={i}
                           onClick={() => {
                             setSelectedTopicObj(proj);
-                            setTodayWork(name || '');
                           }}
                           className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 text-[10px] ${
                             isSelected
@@ -1006,7 +992,6 @@ function StudentClient({ onSessionStateChange }) {
                           key={i}
                           onClick={() => {
                             setSelectedTopicObj(t);
-                            setTodayWork(name || '');
                           }}
                           className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
                             isSelected
@@ -1061,7 +1046,6 @@ function StudentClient({ onSessionStateChange }) {
                           key={i}
                           onClick={() => {
                             setSelectedTopicObj(proj);
-                            setTodayWork(name || '');
                           }}
                           className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 text-[10px] ${
                             isSelected
