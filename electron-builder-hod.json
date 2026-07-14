@@ -1,0 +1,38 @@
+{
+  "appId": "com.neovfx.hoddashboard",
+  "productName": "VFX Lab Pilot HOD Dashboard",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": [
+      "nsis",
+      "portable"
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "VFX Lab Pilot HOD Dashboard",
+    "perMachine": true,
+    "include": "electron/installer.nsh"
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "nfsailab",
+      "repo": "vfx-lab-pilot"
+    },
+    {
+      "provider": "generic",
+      "url": "https://vfxlabpilot.firebasestorage.app/updates"
+    }
+  ]
+}

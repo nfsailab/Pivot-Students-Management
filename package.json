@@ -1,0 +1,44 @@
+{
+  "name": "vfx-machine-management",
+  "version": "1.0.0-beta",
+  "description": "Student machine logging client and admin monitoring dashboard for VFX & Animation AI Lab",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nfsailab/vfx-lab-pilot.git"
+  },
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "electron:build:student": "npm run build && electron-builder -c electron-builder-student.json",
+    "electron:build:hod": "npm run build && electron-builder -c electron-builder-hod.json",
+    "electron:build:all": "npm run build && electron-builder -c electron-builder-student.json && electron-builder -c electron-builder-hod.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "firebase": "^10.8.0",
+    "lucide-react": "^0.331.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
+    "electron": "^28.2.3",
+    "electron-builder": "^24.9.1",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "vite": "^5.1.1",
+    "wait-on": "^7.2.0"
+  }
+}

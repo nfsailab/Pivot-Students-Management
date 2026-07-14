@@ -1,0 +1,39 @@
+{
+  "appId": "com.neovfx.studentclient",
+  "productName": "VFX Lab Pilot Student Client",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "asar": true,
+  "win": {
+    "target": [
+      "nsis",
+      "portable"
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "VFX Lab Pilot Student Client",
+    "perMachine": true,
+    "include": "electron/installer.nsh"
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "nfsailab",
+      "repo": "vfx-lab-pilot"
+    },
+    {
+      "provider": "generic",
+      "url": "https://vfxlabpilot.firebasestorage.app/updates"
+    }
+  ]
+}
