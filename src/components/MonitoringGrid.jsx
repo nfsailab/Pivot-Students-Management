@@ -35,6 +35,7 @@ function MonitoringGrid() {
   const [selectedStudentHistory, setSelectedStudentHistory] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [batchesList, setBatchesList] = useState([]);
+  const [academicSettingsList, setAcademicSettingsList] = useState([]);
 
   // Messaging states
   const [messagingPC, setMessagingPC] = useState(null);
@@ -112,11 +113,16 @@ function MonitoringGrid() {
       setBatchesList(sorted);
     });
 
+    const unsubAcad = subscribeCollection('settings_academic', (data) => {
+      setAcademicSettingsList(data || []);
+    });
+
     return () => {
       unsubComps();
       unsubLogs();
       unsubStudents();
       unsubBatches();
+      unsubAcad();
     };
   }, []);
 
@@ -280,8 +286,11 @@ function MonitoringGrid() {
 
   // Helper calculation: exact duration and hours for a log entry (no idle time calculated/deducted)
   const getLogDurationSecs = (log) => {
-    if (log.durationSecs !== undefined && !isNaN(log.durationSecs)) {
+    if (log.durationSecs !== undefined && !isNaN(log.durationSecs) && Number(log.durationSecs) > 0) {
       return Number(log.durationSecs);
+    }
+    if (log.totalHours !== undefined && !isNaN(log.totalHours) && Number(log.totalHours) > 0) {
+      return Math.round(Number(log.totalHours) * 3600);
     }
     if (!log.startTime) return 0;
     const start = new Date(log.startTime).getTime();
@@ -290,18 +299,86 @@ function MonitoringGrid() {
     return Math.max(0, Math.floor((end - start) / 1000));
   };
 
+  const formatSecsToHrsMins = (totalSecs) => {
+    if (!totalSecs || isNaN(totalSecs) || totalSecs <= 0) return '0 hr 0 min';
+    const hrs = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    if (hrs === 0 && mins === 0 && totalSecs > 0) return '< 1 min';
+    return `${hrs} hr ${mins} min`;
+  };
+
   const getLogTotalHours = (log) => {
-    if (log.totalHours !== undefined && !isNaN(log.totalHours)) {
-      return Number(log.totalHours).toFixed(2);
-    }
     const secs = getLogDurationSecs(log);
-    return (secs / 3600).toFixed(2);
+    return formatSecsToHrsMins(secs);
   };
 
   const totalFilteredSecs = filteredLogs.reduce((acc, log) => acc + getLogDurationSecs(log), 0);
-  const totalFilteredHours = (totalFilteredSecs / 3600).toFixed(2);
+  const totalFilteredHours = formatSecsToHrsMins(totalFilteredSecs);
   const totalFilteredHoursInt = Math.floor(totalFilteredSecs / 3600);
   const totalFilteredMinsInt = Math.floor((totalFilteredSecs % 3600) / 60);
+
+  // Helper calculation: exact duration across all topics added by HOD
+  const getTopicsTotalAllocatedHours = (topics) => {
+    if (!topics || !Array.isArray(topics) || topics.length === 0) return 0;
+    let totalSecs = 0;
+    for (const t of topics) {
+      if (!t || typeof t === 'string') continue;
+      if (t.allottedHours || t.hours || t.durationHours || t.allocatedHours || t.duration) {
+        const val = Number(t.allottedHours ?? t.hours ?? t.durationHours ?? t.allocatedHours ?? t.duration);
+        if (!isNaN(val) && val > 0) {
+          totalSecs += val * 3600;
+          continue;
+        }
+      }
+      const timing = String(t.timing || '').trim();
+      if (!timing) continue;
+
+      const hrMatch = timing.match(/^(\d+(?:\.\d+)?)\s*(?:hr|hours?|h|mins?|m)?$/i);
+      if (hrMatch) {
+        let n = Number(hrMatch[1]);
+        if (/mins?|m/i.test(timing)) n = n / 60;
+        totalSecs += n * 3600;
+        continue;
+      }
+
+      const parts = timing.split(/\s*[-–to]+\s*/i);
+      if (parts.length === 2) {
+        const parseTime = (str) => {
+          const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+          if (!m) return null;
+          let h = parseInt(m[1], 10);
+          const min = m[2] ? parseInt(m[2], 10) : 0;
+          const ampm = m[3] ? m[3].toUpperCase() : null;
+          if (ampm === 'PM' && h < 12) h += 12;
+          if (ampm === 'AM' && h === 12) h = 0;
+          return h * 3600 + min * 60;
+        };
+        const s = parseTime(parts[0]);
+        const e = parseTime(parts[1]);
+        if (s !== null && e !== null) {
+          let diff = e - s;
+          if (diff < 0) diff += 24 * 3600;
+          totalSecs += diff;
+        }
+      }
+    }
+    return Number((totalSecs / 3600).toFixed(2));
+  };
+
+  // Helper calculation: count number of days inside selected date interval
+  const getSelectedDaysCount = (startStr, endStr) => {
+    if (!startStr || !endStr) return 1;
+    const s = new Date(startStr + 'T00:00:00');
+    const e = new Date(endStr + 'T00:00:00');
+    if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return 1;
+    return Math.round((e.getTime() - s.getTime()) / (1000 * 3600 * 24)) + 1;
+  };
+
+  const getValidNum = (val) => {
+    if (val === null || val === undefined || val === '') return null;
+    const n = Number(val);
+    return (!isNaN(n) && n > 0) ? n : null;
+  };
 
   // ----------------------------------------------------
   // GENERATE & DOWNLOAD PDF REPORT (A4 portrait size)
@@ -318,6 +395,50 @@ function MonitoringGrid() {
     }
 
     const reportDateStr = new Date().toLocaleDateString();
+    const studentInfo = isStudentReport ? studentsList.find(s => (s.name || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase()) : null;
+    const batchNameTrimmed = (studentInfo?.batch || '').trim().toLowerCase();
+    const batchInfo = isStudentReport ? batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed) : null;
+    const acadGuideline = isStudentReport ? academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed) : null;
+    const topicsHours = isStudentReport ? getTopicsTotalAllocatedHours(acadGuideline?.topics || []) : 0;
+    const anyAcadWithTopics = isStudentReport ? academicSettingsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0) : null;
+    const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
+    const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
+
+    const baseAllottedHoursNum = isStudentReport ? Number(
+      getValidNum(studentInfo?.allottedHours) ?? 
+      getValidNum(studentInfo?.allocatedHours) ?? 
+      getValidNum(acadGuideline?.allottedHours) ?? 
+      getValidNum(acadGuideline?.allocatedHours) ?? 
+      getValidNum(acadGuideline?.totalAllocatedHours) ?? 
+      getValidNum(batchInfo?.allottedHours) ?? 
+      getValidNum(batchInfo?.allocatedHours) ?? 
+      (topicsHours > 0 ? topicsHours : null) ?? 
+      fallbackAcadHours ?? 
+      (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+    ) : 0;
+    const daysSelected = getSelectedDaysCount(startDate, endDate);
+    const allottedHoursNum = Number((baseAllottedHoursNum * daysSelected).toFixed(2));
+    const allottedSecs = Math.round(allottedHoursNum * 3600);
+    const studentLogs = isStudentReport ? logs.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (selectedStudentHistory || '').toLowerCase()) : [];
+    const dateFilteredLogs = studentLogs.filter(log => {
+      if (!log.startTime) return false;
+      let dateObj = (log.startTime && typeof log.startTime === 'object' && log.startTime.seconds !== undefined)
+        ? new Date(log.startTime.seconds * 1000)
+        : (log.startTime && typeof log.startTime.toDate === 'function')
+          ? log.startTime.toDate()
+          : new Date(log.startTime);
+      if (isNaN(dateObj.getTime())) return false;
+      const localYear = dateObj.getFullYear();
+      const localMonth = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const localDay = String(dateObj.getDate()).padStart(2, '0');
+      const logLocalDateStr = `${localYear}-${localMonth}-${localDay}`;
+      return logLocalDateStr >= startDate && logLocalDateStr <= endDate;
+    });
+    const dateFilteredSecs = dateFilteredLogs.reduce((acc, l) => acc + getLogDurationSecs(l), 0);
+    const allTimeSecs = isStudentReport ? dateFilteredSecs : 0;
+    const allTimeHrsMins = formatSecsToHrsMins(allTimeSecs);
+    const diffSecs = allottedSecs - allTimeSecs;
+    const diffStr = `${formatSecsToHrsMins(Math.abs(diffSecs))} (Time Lapsed)`;
     
     // Style and markup content
     let htmlContent = `
@@ -446,15 +567,19 @@ function MonitoringGrid() {
           </tr>
           <tr>
             <td class="metadata-label">Assigned Batch:</td>
-            <td class="metadata-value">${studentsList.find(s => (s.name || '').toLowerCase() === (selectedStudentHistory || '').toLowerCase())?.batch || 'N/A'}</td>
+            <td class="metadata-value">${studentInfo?.batch || 'N/A'}</td>
             <td class="metadata-label">Report Date Filter:</td>
             <td class="metadata-value">${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}</td>
           </tr>
           <tr>
-            <td class="metadata-label">Recorded Sessions:</td>
-            <td class="metadata-value">${filteredLogs.length} entries</td>
-            <td class="metadata-label">Total Time Used:</td>
-            <td class="metadata-value"><strong>${totalFilteredHours} Hours</strong> (${totalFilteredHoursInt}h ${totalFilteredMinsInt}m) &bull; <em>No idle deduction</em></td>
+            <td class="metadata-label">Allotted (HOD Allocated):</td>
+            <td class="metadata-value"><strong>${allottedHoursNum} hr 0 min</strong></td>
+            <td class="metadata-label">Actual (Student Total):</td>
+            <td class="metadata-value"><strong>${allTimeSecs > 0 ? allTimeHrsMins : totalFilteredHours}</strong></td>
+          </tr>
+          <tr>
+            <td class="metadata-label">Time (Lapsed):</td>
+            <td class="metadata-value" style="color: ${diffSecs >= 0 ? '#047857' : '#b91c1c'};" colspan="3"><strong>${diffStr}</strong> &bull; <em>Allotted - Actual = ${formatSecsToHrsMins(Math.abs(diffSecs))}</em></td>
           </tr>
           ` : `
           <tr>
@@ -471,7 +596,7 @@ function MonitoringGrid() {
           </tr>
           <tr>
             <td class="metadata-label">Total Time Used:</td>
-            <td class="metadata-value" colspan="3"><strong>${totalFilteredHours} Hours</strong> (${totalFilteredHoursInt}h ${totalFilteredMinsInt}m) &bull; <em>No idle deduction</em></td>
+            <td class="metadata-value" colspan="3"><strong>${totalFilteredHours}</strong> &bull; <em>No idle deduction</em></td>
           </tr>
           `}
         </table>
@@ -485,7 +610,7 @@ function MonitoringGrid() {
               <th style="width: 13%">Login Time</th>
               <th style="width: 13%">Logout Time</th>
               <th style="width: 13%">Lab Mode</th>
-              <th style="width: 12%">Total Hours</th>
+              <th style="width: 12%">Total Time</th>
               <th style="width: 18%">Task / Status</th>
             </tr>
           </thead>
@@ -516,7 +641,7 @@ function MonitoringGrid() {
             <td>${logInStr}</td>
             <td>${logOutStr}</td>
             <td>${log.mode || 'N/A'}</td>
-            <td><strong>${hoursUsed} hrs</strong></td>
+            <td><strong>${hoursUsed}</strong></td>
             <td>${taskOrStatus}</td>
           </tr>
         `;
@@ -527,8 +652,8 @@ function MonitoringGrid() {
           </tbody>
           <tfoot>
             <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #6366f1;">
-              <td colspan="5" style="text-align: right; padding: 10px; color: #1e293b;">TOTAL TIME USED (No Idle Deduction):</td>
-              <td colspan="2" style="padding: 10px; color: #312e81;"><strong>${totalFilteredHours} Hours</strong> (${totalFilteredHoursInt}h ${totalFilteredMinsInt}m)</td>
+              <td colspan="5" style="text-align: right; padding: 10px; color: #1e293b;">TOTAL TIME USED:</td>
+              <td colspan="2" style="padding: 10px; color: #312e81;"><strong>${totalFilteredHours}</strong></td>
             </tr>
           </tfoot>
         </table>
@@ -1008,12 +1133,38 @@ function MonitoringGrid() {
                 </span>
                 
                 {historyTab === 'student' ? (() => {
-                  const studentInfo = studentsList.find(s => (s.name || '').toLowerCase() === (selectedStudentHistory || '').toLowerCase());
-                  const allTimeHours = studentInfo?.totalHours || ((studentInfo?.totalSeconds || 0) / 3600).toFixed(2);
+                  const studentInfo = studentsList.find(s => (s.name || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase());
+                  const batchNameTrimmed = (studentInfo?.batch || '').trim().toLowerCase();
+                  const batchInfo = batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
+                  const acadGuideline = academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
+                  const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
+                  const anyAcadWithTopics = academicSettingsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
+                  const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
+                  const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
+
+                  const baseAllottedHoursNum = Number(
+                    getValidNum(studentInfo?.allottedHours) ?? 
+                    getValidNum(studentInfo?.allocatedHours) ?? 
+                    getValidNum(acadGuideline?.allottedHours) ?? 
+                    getValidNum(acadGuideline?.allocatedHours) ?? 
+                    getValidNum(acadGuideline?.totalAllocatedHours) ?? 
+                    getValidNum(batchInfo?.allottedHours) ?? 
+                    getValidNum(batchInfo?.allocatedHours) ?? 
+                    (topicsHours > 0 ? topicsHours : null) ?? 
+                    fallbackAcadHours ?? 
+                    (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+                  );
+                  const daysSelected = getSelectedDaysCount(startDate, endDate);
+                  const allottedHoursNum = Number((baseAllottedHoursNum * daysSelected).toFixed(2));
+                  const allottedSecs = Math.round(allottedHoursNum * 3600);
+                  const actualSecs = totalFilteredSecs;
+                  const actualHrsMins = totalFilteredHours;
+                  const diffSecs = allottedSecs - actualSecs;
+
                   return (
-                    <div className="p-4 bg-studio-900 border border-white/5 rounded-2xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                    <div className="p-4 bg-studio-900 border border-white/5 rounded-2xl grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 text-xs">
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Student Directory Name</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Student Name</span>
                         <p className="font-bold text-white mt-0.5">{selectedStudentHistory || 'N/A'}</p>
                       </div>
                       <div>
@@ -1021,12 +1172,18 @@ function MonitoringGrid() {
                         <p className="font-medium text-studio-accent-purple mt-0.5">{studentInfo?.batch || 'N/A'}</p>
                       </div>
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Interval Total Hours</span>
-                        <p className="font-extrabold text-emerald-400 mt-0.5">{totalFilteredHours} hrs</p>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Allotted (HOD Allocated)</span>
+                        <p className="font-bold font-mono text-white mt-0.5">{allottedHoursNum} hr 0 min</p>
                       </div>
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">All-Time Cumulative Hours</span>
-                        <p className="font-extrabold text-white mt-0.5">{Number(allTimeHours) > 0 ? `${Number(allTimeHours).toFixed(2)} hrs` : `${totalFilteredHours} hrs`}</p>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Actual (Student Total)</span>
+                        <p className="font-extrabold font-mono text-studio-accent-purple mt-0.5">{actualHrsMins}</p>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Time (Lapsed)</span>
+                        <p className={`font-extrabold font-mono mt-0.5 ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Allotted - Actual (for selected date range)">
+                          {formatSecsToHrsMins(Math.abs(diffSecs))} {diffSecs >= 0 ? 'left' : 'over'}
+                        </p>
                       </div>
                     </div>
                   );
@@ -1051,7 +1208,7 @@ function MonitoringGrid() {
                       </div>
                       <div>
                         <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Total Hours</span>
-                        <p className="font-bold text-studio-accent-purple mt-0.5">{getLogTotalHours(lastLogin)} hrs</p>
+                        <p className="font-bold text-studio-accent-purple mt-0.5">{getLogTotalHours(lastLogin)}</p>
                       </div>
                       <div>
                         <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Mode</span>
@@ -1117,7 +1274,7 @@ function MonitoringGrid() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">History Records ({filteredLogs.length})</span>
-                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Total Time: {totalFilteredHours} hrs (no idle time calculated)</span>
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Total Time: {totalFilteredHours} (no idle time calculated)</span>
                 </div>
                 
                 <div className="border border-white/5 rounded-2xl overflow-hidden bg-studio-900">
@@ -1129,7 +1286,7 @@ function MonitoringGrid() {
                         <th className="p-3">Login</th>
                         <th className="p-3">Logout</th>
                         <th className="p-3">Mode</th>
-                        <th className="p-3">Total Hours</th>
+                        <th className="p-3">Total Time</th>
                         <th className="p-3">Status</th>
                       </tr>
                     </thead>
@@ -1156,7 +1313,7 @@ function MonitoringGrid() {
                               <td className="p-3 text-slate-400">{loginTime}</td>
                               <td className="p-3 text-slate-400">{logoutTime}</td>
                               <td className="p-3 text-slate-300 font-semibold">{log.mode}</td>
-                              <td className="p-3 font-mono font-bold text-studio-accent-purple">{hoursUsed} hrs</td>
+                              <td className="p-3 font-mono font-bold text-studio-accent-purple">{hoursUsed}</td>
                               <td className="p-3">
                                 <span className={`font-bold text-[10px] ${
                                   log.status === 'Shutdown Logout' ? 'text-amber-400' :
@@ -1175,10 +1332,10 @@ function MonitoringGrid() {
                       <tfoot className="bg-studio-950 border-t border-white/5">
                         <tr>
                           <td colSpan="5" className="p-3 text-right font-bold text-[11px] text-slate-400">
-                            TOTAL TIME USED (Exact duration, no idle calculation):
+                            TOTAL TIME USED:
                           </td>
                           <td colSpan="2" className="p-3 font-mono font-extrabold text-emerald-400 text-sm">
-                            {totalFilteredHours} hrs ({totalFilteredHoursInt}h {totalFilteredMinsInt}m)
+                            {totalFilteredHours}
                           </td>
                         </tr>
                       </tfoot>

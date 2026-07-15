@@ -41,6 +41,7 @@ function StudentClient({ onSessionStateChange }) {
   const [prodConfigsList, setProdConfigsList] = useState([]);
   const [resConfig, setResConfig] = useState(null);
   const [genaiConfigsList, setGenaiConfigsList] = useState([]);
+  const [logsList, setLogsList] = useState([]);
 
   // Workstation Identifier
   const defaultPc = import.meta.env.VITE_PC_ID || '';
@@ -212,6 +213,10 @@ function StudentClient({ onSessionStateChange }) {
       setGenaiConfigsList(data);
     });
 
+    const unsubLogs = subscribeCollection('activity_logs', (data) => {
+      setLogsList(data || []);
+    });
+
     return () => {
       unsubBatches();
       unsubStudents();
@@ -221,6 +226,7 @@ function StudentClient({ onSessionStateChange }) {
       unsubProd();
       unsubRes();
       unsubGenai();
+      unsubLogs();
     };
   }, []);
 
@@ -494,6 +500,60 @@ function StudentClient({ onSessionStateChange }) {
 
     return () => clearInterval(idleCheckInterval);
   }, [activeSession]);
+
+  // Helper calculation: exact duration across all topics added by HOD
+  const getTopicsTotalAllocatedHours = (topics) => {
+    if (!topics || !Array.isArray(topics) || topics.length === 0) return 0;
+    let totalSecs = 0;
+    for (const t of topics) {
+      if (!t || typeof t === 'string') continue;
+      if (t.allottedHours || t.hours || t.durationHours || t.allocatedHours || t.duration) {
+        const val = Number(t.allottedHours ?? t.hours ?? t.durationHours ?? t.allocatedHours ?? t.duration);
+        if (!isNaN(val) && val > 0) {
+          totalSecs += val * 3600;
+          continue;
+        }
+      }
+      const timing = String(t.timing || '').trim();
+      if (!timing) continue;
+
+      const hrMatch = timing.match(/^(\d+(?:\.\d+)?)\s*(?:hr|hours?|h|mins?|m)?$/i);
+      if (hrMatch) {
+        let n = Number(hrMatch[1]);
+        if (/mins?|m/i.test(timing)) n = n / 60;
+        totalSecs += n * 3600;
+        continue;
+      }
+
+      const parts = timing.split(/\s*[-–to]+\s*/i);
+      if (parts.length === 2) {
+        const parseTime = (str) => {
+          const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+          if (!m) return null;
+          let h = parseInt(m[1], 10);
+          const min = m[2] ? parseInt(m[2], 10) : 0;
+          const ampm = m[3] ? m[3].toUpperCase() : null;
+          if (ampm === 'PM' && h < 12) h += 12;
+          if (ampm === 'AM' && h === 12) h = 0;
+          return h * 3600 + min * 60;
+        };
+        const s = parseTime(parts[0]);
+        const e = parseTime(parts[1]);
+        if (s !== null && e !== null) {
+          let diff = e - s;
+          if (diff < 0) diff += 24 * 3600;
+          totalSecs += diff;
+        }
+      }
+    }
+    return Number((totalSecs / 3600).toFixed(2));
+  };
+
+  const getValidNum = (val) => {
+    if (val === null || val === undefined || val === '') return null;
+    const n = Number(val);
+    return (!isNaN(n) && n > 0) ? n : null;
+  };
 
   // Find configuration specific to selected batch
   const activeAcad = acadConfigsList.find(c => c.id === selectedBatch) || {
@@ -1208,6 +1268,69 @@ function StudentClient({ onSessionStateChange }) {
                 )}
               </div>
 
+              {/* Live Allotted vs Actual Comparison */}
+              {(() => {
+                const studentDoc = students.find(s => (s.name || '').trim().toLowerCase() === (activeSession.studentName || '').trim().toLowerCase());
+                const batchNameTrimmed = (activeSession.studentBatch || '').trim().toLowerCase();
+                const batchDoc = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
+                const acadGuideline = acadConfigsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
+                const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
+                const anyAcadWithTopics = acadConfigsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
+                const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
+                const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
+
+                const allottedHoursNum = Number(
+                  getValidNum(studentDoc?.allottedHours) ?? 
+                  getValidNum(studentDoc?.allocatedHours) ?? 
+                  getValidNum(acadGuideline?.allottedHours) ?? 
+                  getValidNum(acadGuideline?.allocatedHours) ?? 
+                  getValidNum(acadGuideline?.totalAllocatedHours) ?? 
+                  getValidNum(batchDoc?.allottedHours) ?? 
+                  getValidNum(batchDoc?.allocatedHours) ?? 
+                  (topicsHours > 0 ? topicsHours : null) ?? 
+                  fallbackAcadHours ?? 
+                  (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+                );
+                const allottedSecs = allottedHoursNum * 3600;
+                const studentLogs = logsList.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (activeSession.studentName || '').toLowerCase());
+                const logsTotalSecs = studentLogs.reduce((acc, l) => {
+                  const d = Number(l.durationSecs) || (l.endTime && l.startTime ? Math.round((new Date(l.endTime) - new Date(l.startTime)) / 1000) : 0);
+                  return acc + (isNaN(d) || d < 0 ? 0 : d);
+                }, 0);
+                const baseActualSecs = Math.max(
+                  Number(studentDoc?.totalSeconds || 0),
+                  Math.round(Number(studentDoc?.totalHours || 0) * 3600),
+                  logsTotalSecs
+                );
+                const totalLiveSecs = baseActualSecs + elapsedSeconds;
+                const diffSecs = allottedSecs - totalLiveSecs;
+                const formatSecs = (s) => {
+                  const absS = Math.abs(s);
+                  const h = Math.floor(absS / 3600);
+                  const m = Math.floor((absS % 3600) / 60);
+                  return `${h} hr ${m} min`;
+                };
+
+                return (
+                  <div className="p-3 bg-studio-900 border border-white/5 rounded-xl grid grid-cols-3 gap-2 text-center text-[10px] shadow-inner" title="Time = Allotted - Actual">
+                    <div>
+                      <span className="text-[8px] text-slate-500 font-bold uppercase block">Allotted (HOD)</span>
+                      <span className="font-bold text-white font-mono">{allottedHoursNum}h 0m</span>
+                    </div>
+                    <div className="border-l border-white/5">
+                      <span className="text-[8px] text-slate-500 font-bold uppercase block">Actual (Student Total)</span>
+                      <span className="font-bold text-studio-accent-purple font-mono">{formatSecs(totalLiveSecs)}</span>
+                    </div>
+                    <div className="border-l border-white/5">
+                      <span className="text-[8px] text-slate-500 font-bold uppercase block">Time (Lapsed)</span>
+                      <span className={`font-bold font-mono ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatSecs(diffSecs)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Rendering Lock Toggle */}
               <div className={`p-3 rounded-2xl border transition flex items-center justify-between ${
                 isRendering 
@@ -1727,6 +1850,70 @@ function StudentClient({ onSessionStateChange }) {
                 </select>
               </div>
             </div>
+
+            {/* Allotted vs Actual Hours Comparison Card */}
+            {selectedStudent && (() => {
+              const studentDoc = students.find(s => (s.name || '').trim().toLowerCase() === (selectedStudent || '').trim().toLowerCase());
+              const batchNameTrimmed = (selectedBatch || '').trim().toLowerCase();
+              const batchDoc = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
+              const acadGuideline = acadConfigsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
+              const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
+              const anyAcadWithTopics = acadConfigsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
+              const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
+              const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
+
+              const allottedHoursNum = Number(
+                getValidNum(studentDoc?.allottedHours) ?? 
+                getValidNum(studentDoc?.allocatedHours) ?? 
+                getValidNum(acadGuideline?.allottedHours) ?? 
+                getValidNum(acadGuideline?.allocatedHours) ?? 
+                getValidNum(acadGuideline?.totalAllocatedHours) ?? 
+                getValidNum(batchDoc?.allottedHours) ?? 
+                getValidNum(batchDoc?.allocatedHours) ?? 
+                (topicsHours > 0 ? topicsHours : null) ?? 
+                fallbackAcadHours ?? 
+                (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+              );
+              const allottedSecs = allottedHoursNum * 3600;
+              const studentLogs = logsList.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (selectedStudent || '').toLowerCase());
+              const logsTotalSecs = studentLogs.reduce((acc, l) => {
+                const d = Number(l.durationSecs) || (l.endTime && l.startTime ? Math.round((new Date(l.endTime) - new Date(l.startTime)) / 1000) : 0);
+                return acc + (isNaN(d) || d < 0 ? 0 : d);
+              }, 0);
+              const actualSecs = Math.max(
+                Number(studentDoc?.totalSeconds || 0),
+                Math.round(Number(studentDoc?.totalHours || 0) * 3600),
+                logsTotalSecs
+              );
+              const diffSecs = allottedSecs - actualSecs;
+              const formatSecs = (s) => {
+                const absS = Math.abs(s);
+                const h = Math.floor(absS / 3600);
+                const m = Math.floor((absS % 3600) / 60);
+                return `${h} hr ${m} min`;
+              };
+
+              return (
+                <div className="p-3.5 bg-studio-900 border border-white/5 rounded-2xl grid grid-cols-3 gap-3 text-xs shadow-inner" title="Allotted - Actual">
+                  <div className="space-y-0.5">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">Allotted (HOD Allocated)</span>
+                    <span className="font-extrabold text-white font-mono text-sm">{allottedHoursNum} hr 0 min</span>
+                  </div>
+                  <div className="space-y-0.5 border-l border-white/5 pl-3">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">Actual (Student Total)</span>
+                    <span className="font-extrabold text-studio-accent-purple font-mono text-sm">{formatSecs(actualSecs)}</span>
+                  </div>
+                  <div className="space-y-0.5 border-l border-white/5 pl-3">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">
+                      Time (Lapsed)
+                    </span>
+                    <span className={`font-extrabold font-mono text-sm ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {formatSecs(diffSecs)} {diffSecs >= 0 ? 'left' : 'over'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Mode selection */}
             <div className="space-y-1.5">

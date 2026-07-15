@@ -427,6 +427,53 @@ function ModeSettingsTab() {
   // ----------------------------------------------------
   // ACADEMIC HANDLERS
   // ----------------------------------------------------
+  const getTopicsTotalAllocatedHours = (topics) => {
+    if (!topics || !Array.isArray(topics) || topics.length === 0) return 0;
+    let totalSecs = 0;
+    for (const t of topics) {
+      if (!t || typeof t === 'string') continue;
+      if (t.allottedHours || t.hours || t.durationHours || t.allocatedHours || t.duration) {
+        const val = Number(t.allottedHours ?? t.hours ?? t.durationHours ?? t.allocatedHours ?? t.duration);
+        if (!isNaN(val) && val > 0) {
+          totalSecs += val * 3600;
+          continue;
+        }
+      }
+      const timing = String(t.timing || '').trim();
+      if (!timing) continue;
+
+      const hrMatch = timing.match(/^(\d+(?:\.\d+)?)\s*(?:hr|hours?|h|mins?|m)?$/i);
+      if (hrMatch) {
+        let n = Number(hrMatch[1]);
+        if (/mins?|m/i.test(timing)) n = n / 60;
+        totalSecs += n * 3600;
+        continue;
+      }
+
+      const parts = timing.split(/\s*[-–to]+\s*/i);
+      if (parts.length === 2) {
+        const parseTime = (str) => {
+          const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+          if (!m) return null;
+          let h = parseInt(m[1], 10);
+          const min = m[2] ? parseInt(m[2], 10) : 0;
+          const ampm = m[3] ? m[3].toUpperCase() : null;
+          if (ampm === 'PM' && h < 12) h += 12;
+          if (ampm === 'AM' && h === 12) h = 0;
+          return h * 3600 + min * 60;
+        };
+        const s = parseTime(parts[0]);
+        const e = parseTime(parts[1]);
+        if (s !== null && e !== null) {
+          let diff = e - s;
+          if (diff < 0) diff += 24 * 3600;
+          totalSecs += diff;
+        }
+      }
+    }
+    return Number((totalSecs / 3600).toFixed(2));
+  };
+
   const handleAddTopic = (e) => {
     e.preventDefault();
     if (!newTopic.trim() || !newTopicTiming.trim() || !selectedBatch) return;
@@ -455,7 +502,8 @@ function ModeSettingsTab() {
       await updateDocument('settings_academic', selectedBatch, {
         topics: localAcademicTopics,
         instructions: academicInstructions,
-        timeslot: academicTimeslot
+        timeslot: academicTimeslot,
+        allottedHours: getTopicsTotalAllocatedHours(localAcademicTopics)
       });
       setShowAcademicSaved(true);
       setTimeout(() => setShowAcademicSaved(false), 2000);
@@ -496,7 +544,8 @@ function ModeSettingsTab() {
     try {
       await updateDocument('settings_production', selectedBatch, {
         projects: localProductionProjects,
-        instructions: productionInstructions
+        instructions: productionInstructions,
+        allottedHours: getTopicsTotalAllocatedHours(localProductionProjects)
       });
       setShowProductionSaved(true);
       setTimeout(() => setShowProductionSaved(false), 2000);
@@ -537,7 +586,8 @@ function ModeSettingsTab() {
     try {
       await updateDocument('settings_research', research.id, {
         assignmentTopics: localResearchTopics,
-        instructions: researchInstructions
+        instructions: researchInstructions,
+        allottedHours: getTopicsTotalAllocatedHours(localResearchTopics)
       });
       setShowResearchSaved(true);
       setTimeout(() => setShowResearchSaved(false), 2000);
@@ -578,7 +628,8 @@ function ModeSettingsTab() {
     try {
       await updateDocument('settings_genai', selectedBatch, {
         projects: localGenaiProjects,
-        instructions: genaiInstructions
+        instructions: genaiInstructions,
+        allottedHours: getTopicsTotalAllocatedHours(localGenaiProjects)
       });
       setShowGenaiSaved(true);
       setTimeout(() => setShowGenaiSaved(false), 2000);
@@ -725,9 +776,14 @@ function ModeSettingsTab() {
 
             {/* Active Topics Cards List */}
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-                Active Topics ({ localAcademicTopics.length })
-              </label>
+              <div className="flex items-center justify-between bg-studio-900/80 px-3.5 py-2 rounded-xl border border-studio-accent-blue/20">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                  Active Topics ({ localAcademicTopics.length })
+                </span>
+                <span className="text-[10px] font-mono font-bold text-studio-accent-blue">
+                  Total Topics Time: {getTopicsTotalAllocatedHours(localAcademicTopics)} hr
+                </span>
+              </div>
 
               <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                 {localAcademicTopics.length === 0 ? (
@@ -875,9 +931,14 @@ function ModeSettingsTab() {
 
             {/* Active Projects Cards List */}
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-                Active Projects ({ localProductionProjects.length })
-              </label>
+              <div className="flex items-center justify-between bg-studio-900/80 px-3.5 py-2 rounded-xl border border-studio-accent-purple/20">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                  Active Projects ({ localProductionProjects.length })
+                </span>
+                <span className="text-[10px] font-mono font-bold text-studio-accent-purple">
+                  Total Topics Time: {getTopicsTotalAllocatedHours(localProductionProjects)} hr
+                </span>
+              </div>
 
               <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                 {localProductionProjects.length === 0 ? (
@@ -1017,9 +1078,14 @@ function ModeSettingsTab() {
 
             {/* Active Research Topics Cards List */}
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-                Active Research Topics ({ localResearchTopics.length })
-              </label>
+              <div className="flex items-center justify-between bg-studio-900/80 px-3.5 py-2 rounded-xl border border-studio-accent-green/20">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                  Active Research Topics ({ localResearchTopics.length })
+                </span>
+                <span className="text-[10px] font-mono font-bold text-studio-accent-green">
+                  Total Topics Time: {getTopicsTotalAllocatedHours(localResearchTopics)} hr
+                </span>
+              </div>
 
               <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                 {localResearchTopics.length === 0 ? (
@@ -1162,9 +1228,14 @@ function ModeSettingsTab() {
 
             {/* Active GenAI Projects Cards List */}
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-                Active GenAI Projects ({ localGenaiProjects.length })
-              </label>
+              <div className="flex items-center justify-between bg-studio-900/80 px-3.5 py-2 rounded-xl border border-amber-500/20">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                  Active GenAI Projects ({ localGenaiProjects.length })
+                </span>
+                <span className="text-[10px] font-mono font-bold text-amber-400">
+                  Total Topics Time: {getTopicsTotalAllocatedHours(localGenaiProjects)} hr
+                </span>
+              </div>
 
               <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                 {localGenaiProjects.length === 0 ? (
