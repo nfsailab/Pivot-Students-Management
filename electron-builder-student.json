@@ -2,7 +2,7 @@
   "appId": "com.neovfx.studentclient",
   "productName": "VFX Lab Pilot Student Client",
   "directories": {
-    "output": "dist-electron"
+    "output": "dist-electron/student"
   },
   "files": [
     "dist/**/*",
@@ -10,6 +10,9 @@
     "package.json"
   ],
   "asar": true,
+  "asarUnpack": [
+    "electron/watchdog.exe"
+  ],
   "win": {
     "target": [
       "nsis",
@@ -29,11 +32,8 @@
     {
       "provider": "github",
       "owner": "nfsailab",
-      "repo": "VFX-Machine-Management"
-    },
-    {
-      "provider": "generic",
-      "url": "https://vfxlabpilot.firebasestorage.app/updates"
+      "repo": "Pivot",
+      "channel": "student"
     }
   ]
 }

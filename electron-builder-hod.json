@@ -2,7 +2,7 @@
   "appId": "com.neovfx.hoddashboard",
   "productName": "VFX Lab Pilot HOD Dashboard",
   "directories": {
-    "output": "dist-electron"
+    "output": "dist-electron/hod"
   },
   "files": [
     "dist/**/*",
@@ -28,11 +28,8 @@
     {
       "provider": "github",
       "owner": "nfsailab",
-      "repo": "VFX-Machine-Management"
-    },
-    {
-      "provider": "generic",
-      "url": "https://vfxlabpilot.firebasestorage.app/updates"
+      "repo": "Pivot",
+      "channel": "hod"
     }
   ]
 }

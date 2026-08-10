@@ -11,7 +11,8 @@ import {
   Loader2,
   Clock,
   Layers,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react';
 
 // ----------------------------------------------------
@@ -232,11 +233,107 @@ function TimeRangeSlider({ value, onChange, label }) {
 }
 
 // ----------------------------------------------------
+// Default Session Times
+// ----------------------------------------------------
+const DEFAULT_SESSIONS = [
+  { name: 'Session 1', timing: '09:30 AM - 10:25 AM' },
+  { name: 'Session 2', timing: '10:25 AM - 11:20 AM' },
+  { name: 'Session 3', timing: '11:35 AM - 12:30 PM' },
+  { name: 'Session 4', timing: '01:15 PM - 02:10 PM' },
+  { name: 'Session 5', timing: '02:10 PM - 03:05 PM' },
+  { name: 'Session 6', timing: '03:05 PM - 04:15 PM' },
+  { name: 'Session 7', timing: '04:15 PM - 06:15 PM' }
+];
+
+const calculateSessionDuration = (timing) => {
+  if (!timing) return 0;
+  const parts = timing.split(/\s*[-–to]+\s*/i);
+  if (parts.length !== 2) return 0;
+  
+  const parseTime = (str) => {
+    const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ampm = m[3] ? m[3].toUpperCase() : null;
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+  
+  const s = parseTime(parts[0]);
+  const e = parseTime(parts[1]);
+  if (s !== null && e !== null) {
+    let diff = e - s;
+    if (diff < 0) diff += 24 * 60;
+    return diff;
+  }
+  return 0;
+};
+
+// ----------------------------------------------------
 // Main Mode Settings Panel Component
 // ----------------------------------------------------
 function ModeSettingsTab() {
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState('');
+
+  const [showSessionsModal, setShowSessionsModal] = useState(false);
+  const [modalSessions, setModalSessions] = useState([]);
+
+  const activeBatchObj = batches.find(b => b.batchName === selectedBatch);
+
+  const handleToggleSessionTimes = async () => {
+    if (!activeBatchObj) return;
+    const newStatus = !activeBatchObj.useSessionTimes;
+    const updates = { useSessionTimes: newStatus };
+    if (newStatus && (!activeBatchObj.sessionTimes || activeBatchObj.sessionTimes.length === 0)) {
+      updates.sessionTimes = DEFAULT_SESSIONS;
+    }
+    try {
+      await updateDocument('batches', activeBatchObj.id, updates);
+    } catch (err) {
+      console.error('Failed to toggle session times:', err);
+    }
+  };
+
+  const handleOpenSessionsModal = () => {
+    if (!activeBatchObj) return;
+    setModalSessions(activeBatchObj.sessionTimes || DEFAULT_SESSIONS);
+    setShowSessionsModal(true);
+  };
+
+  const handleUpdateModalSession = (index, field, value) => {
+    const newSessions = [...modalSessions];
+    newSessions[index] = { ...newSessions[index], [field]: value };
+    setModalSessions(newSessions);
+  };
+
+  const handleAddModalSession = () => {
+    const nextNum = modalSessions.length + 1;
+    setModalSessions([
+      ...modalSessions,
+      { name: `Session ${nextNum}`, timing: '09:30 AM - 10:25 AM' }
+    ]);
+  };
+
+  const handleDeleteModalSession = (index) => {
+    const newSessions = modalSessions.filter((_, idx) => idx !== index);
+    setModalSessions(newSessions);
+  };
+
+  const handleSaveSessions = async () => {
+    if (!activeBatchObj) return;
+    try {
+      await updateDocument('batches', activeBatchObj.id, {
+        sessionTimes: modalSessions
+      });
+      setShowSessionsModal(false);
+    } catch (err) {
+      console.error('Failed to save session times:', err);
+      alert('Failed to save sessions: ' + err.message);
+    }
+  };
 
   const [academicSettingsList, setAcademicSettingsList] = useState([]);
   const [productionSettingsList, setProductionSettingsList] = useState([]);
@@ -683,7 +780,7 @@ function ModeSettingsTab() {
     <div className="space-y-6 font-sans">
       
       {/* a. Global Batch Selector Header - left positioned dropdown, removed 'Batch Selector' text */}
-      <div className="glass-panel p-5 rounded-2xl border border-white/5 flex flex-col sm:flex-row items-center justify-start gap-4">
+      <div className="glass-panel p-5 rounded-2xl border border-white/5 flex flex-col sm:flex-row items-center justify-start gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 bg-studio-accent-purple/10 flex items-center justify-center rounded-xl text-studio-accent-purple shrink-0">
             <Layers className="h-4.5 w-4.5" />
@@ -704,6 +801,39 @@ function ModeSettingsTab() {
         <div className="hidden sm:block text-[10px] text-slate-500 font-medium sm:ml-4 border-l border-white/5 pl-4 py-1">
           Set curriculum guidelines & project rosters per class batch
         </div>
+        
+        {/* Toggle Session Times */}
+        {activeBatchObj && (
+          <div className="flex items-center gap-3 sm:ml-auto border-t sm:border-t-0 sm:border-l border-white/5 pt-3 sm:pt-0 sm:pl-4">
+            <span className="text-xs text-slate-450 font-bold">Session Times:</span>
+            <button
+              type="button"
+              onClick={handleToggleSessionTimes}
+              className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${
+                activeBatchObj.useSessionTimes ? 'bg-studio-accent-purple' : 'bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  activeBatchObj.useSessionTimes ? 'translate-x-5.5' : 'translate-x-1'
+                }`}
+              />
+            </button>
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${activeBatchObj.useSessionTimes ? 'text-studio-accent-purple' : 'text-slate-500'}`}>
+              {activeBatchObj.useSessionTimes ? 'ON' : 'OFF'}
+            </span>
+            {activeBatchObj.useSessionTimes && (
+              <button
+                type="button"
+                onClick={handleOpenSessionsModal}
+                className="px-2.5 py-1 rounded bg-studio-accent-purple/10 border border-studio-accent-purple/20 text-studio-accent-purple hover:bg-studio-accent-purple hover:text-white text-[10px] font-bold transition flex items-center gap-1 shrink-0 shadow-sm ml-1"
+              >
+                <Clock className="h-3 w-3" />
+                Edit Sessions
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8 items-start">
@@ -1307,6 +1437,121 @@ function ModeSettingsTab() {
           </div>
         </div>
       </div>
+
+      {/* Edit Sessions Modal */}
+      {showSessionsModal && (
+        <div className="fixed inset-0 z-50 bg-studio-950/70 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-panel-glow border-studio-accent-purple/20 max-w-2xl w-full rounded-3xl overflow-hidden shadow-2xl flex flex-col justify-between max-h-[85vh] relative animate-fade-in">
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-studio-accent-purple to-transparent"></div>
+            
+            {/* Header */}
+            <div className="p-6 border-b border-white/5 flex items-center justify-between bg-studio-900/40">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 bg-studio-accent-purple/10 flex items-center justify-center rounded-xl text-studio-accent-purple">
+                  <Clock className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base">Edit Session Times</h3>
+                  <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Configure sessions for batch: {selectedBatch}</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowSessionsModal(false)}
+                className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              <div className="space-y-3">
+                {modalSessions.map((session, index) => {
+                  const duration = calculateSessionDuration(session.timing);
+                  return (
+                    <div key={index} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 bg-studio-900/60 border border-white/5 rounded-2xl">
+                      <div className="w-full sm:w-1/3">
+                        <input
+                          type="text"
+                          value={session.name}
+                          onChange={(e) => handleUpdateModalSession(index, 'name', e.target.value)}
+                          placeholder="Session Name"
+                          className="w-full px-3 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs font-semibold"
+                        />
+                      </div>
+                      <div className="w-full sm:w-5/12">
+                        <input
+                          type="text"
+                          value={session.timing}
+                          onChange={(e) => handleUpdateModalSession(index, 'timing', e.target.value)}
+                          placeholder="e.g. 09:30 AM - 10:25 AM"
+                          className="w-full px-3 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs font-mono font-medium"
+                        />
+                      </div>
+                      <div className="w-full sm:w-2/12 text-slate-400 font-mono text-[10px] text-center font-bold">
+                        {duration > 0 ? (
+                          <span className="text-studio-accent-purple">{duration} mins</span>
+                        ) : (
+                          <span className="text-rose-500 font-semibold">Invalid format</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteModalSession(index)}
+                        className="p-1.5 text-slate-500 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition shrink-0"
+                        title="Delete Session"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAddModalSession}
+                className="w-full py-2 border border-dashed border-white/10 hover:border-studio-accent-purple/50 text-slate-400 hover:text-white rounded-xl transition flex items-center justify-center gap-1.5 text-xs font-bold"
+              >
+                <Plus className="h-4 w-4" />
+                Add New Session
+              </button>
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 border-t border-white/5 bg-studio-900/40 flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-400 font-mono">
+                Total Cumulative Time:{' '}
+                <span className="text-emerald-400">
+                  {(() => {
+                    const totalMins = modalSessions.reduce((acc, s) => acc + calculateSessionDuration(s.timing), 0);
+                    const hrs = Math.floor(totalMins / 60);
+                    const mins = totalMins % 60;
+                    return `${totalMins} minutes (${hrs} hour${hrs !== 1 ? 's' : ''}${mins > 0 ? `, ${mins} minute${mins !== 1 ? 's' : ''}` : ''})`;
+                  })()}
+                </span>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSessionsModal(false)}
+                  className="px-4 py-2 bg-studio-800 hover:bg-studio-700 text-white rounded-xl text-xs font-bold transition border border-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSessions}
+                  className="px-5 py-2 bg-studio-accent-purple hover:bg-studio-accent-purple/90 text-white rounded-xl text-xs font-bold transition shadow-md shadow-glow-purple/20"
+                >
+                  Save Sessions
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

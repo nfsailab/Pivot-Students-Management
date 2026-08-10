@@ -70,6 +70,7 @@ function StudentClient({ onSessionStateChange }) {
   const [lastMsgId, setLastMsgId] = useState(null);
   const [showNotification, setShowNotification] = useState(false);
   const [activeMessage, setActiveMessage] = useState(null);
+  const [hasReadActiveMessage, setHasReadActiveMessage] = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [confirmMainShutdown, setConfirmMainShutdown] = useState(false);
   const [showPowerDropdown, setShowPowerDropdown] = useState(false);
@@ -396,6 +397,7 @@ function StudentClient({ onSessionStateChange }) {
       if (myPCData.message.id !== lastMsgId) {
         setLastMsgId(myPCData.message.id);
         setActiveMessage(myPCData.message);
+        setHasReadActiveMessage(false); // Reset to false for new incoming message
         setMessagesList(prev => {
           if (prev.some(m => m.id === myPCData.message.id)) return prev;
           return [...prev, myPCData.message];
@@ -414,6 +416,8 @@ function StudentClient({ onSessionStateChange }) {
     if (window.electronAPI && typeof window.electronAPI.onFocusMessage === 'function') {
       const cleanup = window.electronAPI.onFocusMessage(() => {
         setIsMinimized(false);
+        setShowMessagesModal(true); // Open messages modal automatically
+        setHasReadActiveMessage(true); // Stop vibration movement
       });
       return () => {
         cleanup();
@@ -856,6 +860,7 @@ function StudentClient({ onSessionStateChange }) {
       setSelectedTopicObj(null);
       setLastMsgId(null);
       setActiveMessage(null);
+      setHasReadActiveMessage(false);
       setShowNotification(false);
       setIsMinimized(false);
       setMessagesList([]);
@@ -1167,11 +1172,16 @@ function StudentClient({ onSessionStateChange }) {
           <div 
             onClick={() => {
               setIsMinimized(false);
+              setHasReadActiveMessage(true);
               if (window.electronAPI && typeof window.electronAPI.maximizeWidget === 'function') {
                 window.electronAPI.maximizeWidget();
               }
             }}
-            className="w-full h-full glass-panel border-studio-accent-purple/20 p-2.5 rounded-2xl flex items-center justify-center gap-3 cursor-pointer hover:border-studio-accent-purple/40 transition duration-200 pointer-events-auto"
+            className={`w-full h-full glass-panel p-2.5 rounded-2xl flex items-center justify-center gap-3 cursor-pointer transition duration-200 pointer-events-auto ${
+              activeMessage && !hasReadActiveMessage 
+                ? 'animate-alert-attention border-amber-500/80 bg-amber-500/10 opacity-100' 
+                : 'border-studio-accent-purple/20 hover:border-studio-accent-purple/40 opacity-50 hover:opacity-100'
+            }`}
           >
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -1206,7 +1216,10 @@ function StudentClient({ onSessionStateChange }) {
               </div>
               <div className="flex gap-2">
                 <button 
-                  onClick={() => setShowMessagesModal(true)}
+                  onClick={() => {
+                    setShowMessagesModal(true);
+                    setHasReadActiveMessage(true);
+                  }}
                   className="relative px-2.5 py-1 text-[10px] font-bold text-slate-450 hover:text-white hover:bg-white/5 rounded-lg border border-white/5 transition flex items-center gap-1"
                   title="View HOD Messages"
                 >
@@ -1268,68 +1281,6 @@ function StudentClient({ onSessionStateChange }) {
                 )}
               </div>
 
-              {/* Live Allotted vs Actual Comparison */}
-              {(() => {
-                const studentDoc = students.find(s => (s.name || '').trim().toLowerCase() === (activeSession.studentName || '').trim().toLowerCase());
-                const batchNameTrimmed = (activeSession.studentBatch || '').trim().toLowerCase();
-                const batchDoc = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
-                const acadGuideline = acadConfigsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
-                const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
-                const anyAcadWithTopics = acadConfigsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
-                const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
-                const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
-
-                const allottedHoursNum = Number(
-                  getValidNum(studentDoc?.allottedHours) ?? 
-                  getValidNum(studentDoc?.allocatedHours) ?? 
-                  getValidNum(acadGuideline?.allottedHours) ?? 
-                  getValidNum(acadGuideline?.allocatedHours) ?? 
-                  getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-                  getValidNum(batchDoc?.allottedHours) ?? 
-                  getValidNum(batchDoc?.allocatedHours) ?? 
-                  (topicsHours > 0 ? topicsHours : null) ?? 
-                  fallbackAcadHours ?? 
-                  (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
-                );
-                const allottedSecs = allottedHoursNum * 3600;
-                const studentLogs = logsList.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (activeSession.studentName || '').toLowerCase());
-                const logsTotalSecs = studentLogs.reduce((acc, l) => {
-                  const d = Number(l.durationSecs) || (l.endTime && l.startTime ? Math.round((new Date(l.endTime) - new Date(l.startTime)) / 1000) : 0);
-                  return acc + (isNaN(d) || d < 0 ? 0 : d);
-                }, 0);
-                const baseActualSecs = Math.max(
-                  Number(studentDoc?.totalSeconds || 0),
-                  Math.round(Number(studentDoc?.totalHours || 0) * 3600),
-                  logsTotalSecs
-                );
-                const totalLiveSecs = baseActualSecs + elapsedSeconds;
-                const diffSecs = allottedSecs - totalLiveSecs;
-                const formatSecs = (s) => {
-                  const absS = Math.abs(s);
-                  const h = Math.floor(absS / 3600);
-                  const m = Math.floor((absS % 3600) / 60);
-                  return `${h} hr ${m} min`;
-                };
-
-                return (
-                  <div className="p-3 bg-studio-900 border border-white/5 rounded-xl grid grid-cols-3 gap-2 text-center text-[10px] shadow-inner" title="Time = Allotted - Actual">
-                    <div>
-                      <span className="text-[8px] text-slate-500 font-bold uppercase block">Allotted (HOD)</span>
-                      <span className="font-bold text-white font-mono">{allottedHoursNum}h 0m</span>
-                    </div>
-                    <div className="border-l border-white/5">
-                      <span className="text-[8px] text-slate-500 font-bold uppercase block">Actual (Student Total)</span>
-                      <span className="font-bold text-studio-accent-purple font-mono">{formatSecs(totalLiveSecs)}</span>
-                    </div>
-                    <div className="border-l border-white/5">
-                      <span className="text-[8px] text-slate-500 font-bold uppercase block">Time (Lapsed)</span>
-                      <span className={`font-bold font-mono ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {formatSecs(diffSecs)}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
 
               {/* Rendering Lock Toggle */}
               <div className={`p-3 rounded-2xl border transition flex items-center justify-between ${
@@ -1373,7 +1324,9 @@ function StudentClient({ onSessionStateChange }) {
 
               {/* Admin alert display */}
               {activeMessage && (
-                <div className="p-3.5 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1 animate-pulse">
+                <div className={`p-3.5 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1 ${
+                  hasReadActiveMessage ? 'animate-pulse' : 'animate-alert-attention'
+                }`}>
                   <div className="flex items-center gap-1.5 text-amber-400">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     <span className="text-[9px] font-bold uppercase tracking-wider">HOD Alert Message</span>
@@ -1850,70 +1803,6 @@ function StudentClient({ onSessionStateChange }) {
                 </select>
               </div>
             </div>
-
-            {/* Allotted vs Actual Hours Comparison Card */}
-            {selectedStudent && (() => {
-              const studentDoc = students.find(s => (s.name || '').trim().toLowerCase() === (selectedStudent || '').trim().toLowerCase());
-              const batchNameTrimmed = (selectedBatch || '').trim().toLowerCase();
-              const batchDoc = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
-              const acadGuideline = acadConfigsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
-              const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
-              const anyAcadWithTopics = acadConfigsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
-              const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
-              const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
-
-              const allottedHoursNum = Number(
-                getValidNum(studentDoc?.allottedHours) ?? 
-                getValidNum(studentDoc?.allocatedHours) ?? 
-                getValidNum(acadGuideline?.allottedHours) ?? 
-                getValidNum(acadGuideline?.allocatedHours) ?? 
-                getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-                getValidNum(batchDoc?.allottedHours) ?? 
-                getValidNum(batchDoc?.allocatedHours) ?? 
-                (topicsHours > 0 ? topicsHours : null) ?? 
-                fallbackAcadHours ?? 
-                (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
-              );
-              const allottedSecs = allottedHoursNum * 3600;
-              const studentLogs = logsList.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (selectedStudent || '').toLowerCase());
-              const logsTotalSecs = studentLogs.reduce((acc, l) => {
-                const d = Number(l.durationSecs) || (l.endTime && l.startTime ? Math.round((new Date(l.endTime) - new Date(l.startTime)) / 1000) : 0);
-                return acc + (isNaN(d) || d < 0 ? 0 : d);
-              }, 0);
-              const actualSecs = Math.max(
-                Number(studentDoc?.totalSeconds || 0),
-                Math.round(Number(studentDoc?.totalHours || 0) * 3600),
-                logsTotalSecs
-              );
-              const diffSecs = allottedSecs - actualSecs;
-              const formatSecs = (s) => {
-                const absS = Math.abs(s);
-                const h = Math.floor(absS / 3600);
-                const m = Math.floor((absS % 3600) / 60);
-                return `${h} hr ${m} min`;
-              };
-
-              return (
-                <div className="p-3.5 bg-studio-900 border border-white/5 rounded-2xl grid grid-cols-3 gap-3 text-xs shadow-inner" title="Allotted - Actual">
-                  <div className="space-y-0.5">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">Allotted (HOD Allocated)</span>
-                    <span className="font-extrabold text-white font-mono text-sm">{allottedHoursNum} hr 0 min</span>
-                  </div>
-                  <div className="space-y-0.5 border-l border-white/5 pl-3">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">Actual (Student Total)</span>
-                    <span className="font-extrabold text-studio-accent-purple font-mono text-sm">{formatSecs(actualSecs)}</span>
-                  </div>
-                  <div className="space-y-0.5 border-l border-white/5 pl-3">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">
-                      Time (Lapsed)
-                    </span>
-                    <span className={`font-extrabold font-mono text-sm ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {formatSecs(diffSecs)} {diffSecs >= 0 ? 'left' : 'over'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* Mode selection */}
             <div className="space-y-1.5">

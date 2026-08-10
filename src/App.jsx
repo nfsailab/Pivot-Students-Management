@@ -280,32 +280,34 @@ function App() {
           NOTIFICATION VIEW (POPUP WINDOW)
          ---------------------------------------------------- */}
       {currentView === 'notification' && notificationMsg && (
-        <div 
-          onClick={() => window.electronAPI.clickNotification()}
-          className="fixed inset-0 z-50 w-full h-full glass-panel border-amber-500/30 p-4 rounded-2xl shadow-2xl bg-amber-955 flex items-start gap-3 cursor-pointer select-none hover:border-amber-500/50 transition duration-200"
-        >
-          <div className="h-9 w-9 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-400 shrink-0 animate-pulse">
-            <AlertTriangle className="h-5 w-5" />
-          </div>
-          <div className="flex-1 min-w-0 space-y-1">
-            <div className="flex items-center justify-between flex-row">
-              <span className="text-[10px] font-extrabold text-amber-400 uppercase tracking-widest">{notificationMsg.title || 'HOD Broadcast'}</span>
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.electronAPI.closeNotification();
-                }}
-                className="p-1 text-slate-400 hover:text-white rounded transition hover:bg-white/5"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+        <div className="fixed inset-0 p-2 bg-transparent flex items-center justify-center">
+          <div 
+            onClick={() => window.electronAPI.clickNotification()}
+            className="w-full h-full glass-panel border-amber-500/30 p-4 rounded-2xl shadow-2xl bg-studio-900 flex items-start gap-3 cursor-pointer select-none hover:border-amber-500/50 transition duration-200 animate-alert-attention"
+          >
+            <div className="h-9 w-9 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-400 shrink-0 animate-pulse">
+              <AlertTriangle className="h-5 w-5" />
             </div>
-            <p className="text-xs text-white font-medium leading-relaxed line-clamp-3">
-              {notificationMsg.text}
-            </p>
-            <span className="text-[9px] text-slate-500 font-mono block pt-0.5">
-              Received at {new Date(notificationMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-            </span>
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex items-center justify-between flex-row">
+                <span className="text-[10px] font-extrabold text-amber-400 uppercase tracking-widest">{notificationMsg.title || 'HOD Broadcast'}</span>
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.electronAPI.closeNotification();
+                  }}
+                  className="p-1 text-slate-400 hover:text-white rounded transition hover:bg-white/5"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p className="text-xs text-white font-medium leading-relaxed line-clamp-3">
+                {notificationMsg.text}
+              </p>
+              <span className="text-[9px] text-slate-500 font-mono block pt-0.5">
+                Received at {new Date(notificationMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            </div>
           </div>
         </div>
       )}

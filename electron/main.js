@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
+const fs = require('fs');
+const { spawn } = require('child_process');
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -8,8 +10,8 @@ autoUpdater.autoInstallOnAppQuit = true;
 let mainWindow;
 let notificationWindow;
 let isMinimizedState = false;
-const fs = require('fs');
 let logFilePath = '';
+let watchdogProcess = null;
 
 function logToFile(msg) {
   if (!logFilePath) return;
@@ -17,8 +19,6 @@ function logToFile(msg) {
     fs.appendFileSync(logFilePath, `[${new Date().toISOString()}] ${msg}\n`);
   } catch (err) {}
 }
-
-
 
 // Read running mode from product name or command line or environment
 const appName = app.getName().toLowerCase();
@@ -29,6 +29,52 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 let isSessionActive = false;
 let allowAppQuit = false;
 
+// Spawns the watchdog.exe process in student production mode
+function startWatchdog() {
+  if (!isStudentMode || isDev) return;
+  
+  const watchdogPath = path.join(__dirname, 'watchdog.exe').replace('app.asar', 'app.asar.unpacked');
+  const clientPath = app.getPath('exe');
+
+  logToFile(`Spawning watchdog process: ${watchdogPath} for PID: ${process.pid}`);
+
+  try {
+    watchdogProcess = spawn(watchdogPath, [process.pid.toString(), clientPath], {
+      detached: true,
+      stdio: 'ignore'
+    });
+
+    watchdogProcess.on('exit', (code) => {
+      logToFile(`Watchdog process exited with code ${code}`);
+      watchdogProcess = null;
+
+      // If the client is not closing normally, restart the watchdog
+      if (!allowAppQuit) {
+        logToFile('Watchdog exited unexpectedly. Restarting watchdog in 1s...');
+        setTimeout(startWatchdog, 1000);
+      }
+    });
+
+    watchdogProcess.unref();
+  } catch (err) {
+    logToFile(`Failed to spawn watchdog process: ${err.message}`);
+  }
+}
+
+// Safely terminates the watchdog process before app shutdown
+function killWatchdog() {
+  allowAppQuit = true;
+  if (watchdogProcess) {
+    logToFile('Killing watchdog process as part of authorized application exit.');
+    try {
+      watchdogProcess.kill();
+    } catch (e) {
+      logToFile(`Error killing watchdog: ${e.message}`);
+    }
+    watchdogProcess = null;
+  }
+}
+
 function createWindow() {
   console.log(`App Name: ${app.getName()} (${appName})`);
   console.log(`Launching in ${isStudentMode ? 'STUDENT' : 'ADMIN'} mode. Dev environment: ${isDev}`);
@@ -38,6 +84,7 @@ function createWindow() {
     height: 800,
     frame: !isStudentMode, // Frameless in student mode to support transparency
     transparent: isStudentMode, // Transparent window in student mode
+    resizable: !isStudentMode, // Lock student widget so it is not resizable
     movable: !isStudentMode, // Make window unmovable in student mode
     closable: !isStudentMode, // Disable exit/close button in student mode
     minimizable: !isStudentMode, // Disable minimize button/action in student mode
@@ -93,6 +140,9 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Start the watchdog process (if running as student client in production)
+  startWatchdog();
 }
 
 // Disable Alt+Tab and window switching keys in student kiosk mode (Windows specific hooks)
@@ -136,7 +186,7 @@ ipcMain.handle('get-system-idle-time', () => {
 
 // IPC handler to exit application from React UI
 ipcMain.on('quit-app', () => {
-  allowAppQuit = true;
+  killWatchdog();
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setClosable(true);
   }
@@ -145,7 +195,7 @@ ipcMain.on('quit-app', () => {
 
 ipcMain.on('proceed-shutdown', () => {
   logToFile('IPC proceed-shutdown received from UI.');
-  allowAppQuit = true;
+  killWatchdog();
   isSessionActive = false;
   const { exec } = require('child_process');
   exec('shutdown /s /t 0', (err) => {
@@ -159,7 +209,7 @@ ipcMain.on('proceed-shutdown', () => {
 
 ipcMain.on('proceed-restart', () => {
   logToFile('IPC proceed-restart received from UI.');
-  allowAppQuit = true;
+  killWatchdog();
   isSessionActive = false;
   const { exec } = require('child_process');
   exec('shutdown /r /t 0', (err) => {
@@ -173,7 +223,7 @@ ipcMain.on('proceed-restart', () => {
 
 ipcMain.on('auto-logout-completed', () => {
   logToFile('IPC auto-logout-completed received from UI.');
-  allowAppQuit = true;
+  killWatchdog();
   isSessionActive = false;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setClosable(true);
@@ -459,77 +509,47 @@ async function performMultiProviderUpdateCheck() {
   }
 
   isCheckingUpdate = true;
-  suppressErrorEvent = true;
+  suppressErrorEvent = false;
   sendToWindows('update-status', { status: 'checking', text: 'Checking for updates...' });
 
   try {
-    logToFile('Attempting update check via primary GitHub feed...');
-    try {
-      autoUpdater.setFeedURL({
-        provider: 'github',
-        owner: 'neovfx',
-        repo: 'vfx-lab-pilot'
-      });
-    } catch (e) {
-      logToFile(`setFeedURL github error: ${e.message}`);
-    }
+    logToFile('Attempting update check via GitHub Releases...');
+    autoUpdater.channel = isStudentMode ? 'student' : 'hod';
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: 'nfsailab',
+      repo: 'Pivot'
+    });
 
     const result = await autoUpdater.checkForUpdates();
     if (result && result.updateInfo) {
       isCheckingUpdate = false;
-      suppressErrorEvent = false;
       return;
     }
-  } catch (err1) {
-    logToFile(`GitHub provider update check error: ${err1 ? err1.message : err1}`);
-    const err1Str = (err1 ? (err1.message || err1.toString()) : '').toLowerCase();
+  } catch (err) {
+    logToFile(`GitHub provider update check error: ${err ? err.message : err}`);
+    const errStr = (err ? (err.message || err.toString()) : '').toLowerCase();
 
-    // Now try fallback: generic provider (Firebase Storage)
-    try {
-      logToFile('Falling back to alternative update server (Firebase Storage)...');
-      sendToWindows('update-status', { status: 'checking', text: 'Checking alternative update server...' });
-      try {
-        autoUpdater.setFeedURL({
-          provider: 'generic',
-          url: 'https://vfxlabpilot.firebasestorage.app/updates'
-        });
-      } catch (e) {
-        logToFile(`setFeedURL generic error: ${e.message}`);
-      }
-
-      const result2 = await autoUpdater.checkForUpdates();
-      if (result2 && result2.updateInfo) {
-        isCheckingUpdate = false;
-        suppressErrorEvent = false;
-        return;
-      }
-    } catch (err2) {
-      logToFile(`Generic provider update check error: ${err2 ? err2.message : err2}`);
-      const err2Str = (err2 ? (err2.message || err2.toString()) : '').toLowerCase();
-
-      // If either check encountered a 404, it means no release packages exist on server yet
-      if (err1Str.includes('404') || err2Str.includes('404') || err1Str.includes('releases.atom') || err2Str.includes('latest.yml')) {
-        logToFile('Update check returned 404 (no published release found on server). Treating as up-to-date.');
-        sendToWindows('update-not-available', { version: app.getVersion() });
-        isCheckingUpdate = false;
-        suppressErrorEvent = false;
-        return;
-      }
-
-      let cleanMessage = err2 ? (err2.message || err2.toString()) : (err1 ? (err1.message || err1.toString()) : 'Error checking for updates.');
-      if (cleanMessage.includes('Headers:')) {
-        cleanMessage = cleanMessage.split('Headers:')[0].trim();
-      }
-      if (cleanMessage.includes('net::ERR_INTERNET_DISCONNECTED') || cleanMessage.includes('ENOTFOUND') || cleanMessage.includes('net::ERR_NAME_NOT_RESOLVED')) {
-        cleanMessage = 'Network connection error while checking for updates. Please verify your internet connection.';
-      }
-
-      sendToWindows('update-error', { message: cleanMessage });
+    // If check encountered a 404 (no release or yml file found on server yet)
+    if (errStr.includes('404') || errStr.includes('releases.atom') || errStr.includes('yml')) {
+      logToFile('Update check returned 404 (no published release found on server). Treating as up-to-date.');
+      sendToWindows('update-not-available', { version: app.getVersion() });
+      isCheckingUpdate = false;
+      return;
     }
+
+    let cleanMessage = err ? (err.message || err.toString()) : 'Error checking for updates.';
+    if (cleanMessage.includes('Headers:')) {
+      cleanMessage = cleanMessage.split('Headers:')[0].trim();
+    }
+    if (cleanMessage.includes('net::ERR_INTERNET_DISCONNECTED') || cleanMessage.includes('ENOTFOUND') || cleanMessage.includes('net::ERR_NAME_NOT_RESOLVED')) {
+      cleanMessage = 'Network connection error while checking for updates. Please verify your internet connection.';
+    }
+
+    sendToWindows('update-error', { message: cleanMessage });
   }
 
   isCheckingUpdate = false;
-  suppressErrorEvent = false;
 }
 
 ipcMain.on('check-for-updates', () => {
@@ -552,6 +572,6 @@ ipcMain.on('start-update-download', () => {
 
 ipcMain.on('install-update', () => {
   logToFile('IPC install-update triggered');
-  allowAppQuit = true;
+  killWatchdog();
   autoUpdater.quitAndInstall();
 });

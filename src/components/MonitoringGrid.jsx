@@ -19,6 +19,39 @@ import {
   MessageSquare
 } from 'lucide-react';
 
+const getSessionTimesTotalHours = (batch) => {
+  if (!batch || !batch.useSessionTimes || !batch.sessionTimes || !Array.isArray(batch.sessionTimes)) return 0;
+  
+  const parseTimeToMinutes = (str) => {
+    const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ampm = m[3] ? m[3].toUpperCase() : null;
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+
+  let totalMins = 0;
+  for (const s of batch.sessionTimes) {
+    if (!s) continue;
+    const timing = typeof s === 'string' ? s : s.timing;
+    if (!timing) continue;
+    const parts = timing.split(/\s*[-–to]+\s*/i);
+    if (parts.length === 2) {
+      const start = parseTimeToMinutes(parts[0]);
+      const end = parseTimeToMinutes(parts[1]);
+      if (start !== null && end !== null) {
+        let diff = end - start;
+        if (diff < 0) diff += 24 * 60;
+        totalMins += diff;
+      }
+    }
+  }
+  return Number((totalMins / 60).toFixed(2));
+};
+
 function MonitoringGrid() {
   const [computers, setComputers] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -45,8 +78,8 @@ function MonitoringGrid() {
   const [groupMessageText, setGroupMessageText] = useState('');
   const [isSendingGroup, setIsSendingGroup] = useState(false);
 
-  // Date range filters (default to last 6 months)
-  const defaultStartDate = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Date range filters (default to last 1 month, even though total search date is past 6 months)
+  const defaultStartDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const defaultEndDate = new Date().toISOString().split('T')[0];
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(defaultEndDate);
@@ -193,6 +226,7 @@ function MonitoringGrid() {
           currentUser: null,
           currentMode: null,
           currentTask: null,
+          currentSession: null,
           startTime: null,
           lastActive: new Date().toISOString()
         });
@@ -405,16 +439,20 @@ function MonitoringGrid() {
     const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
 
     const baseAllottedHoursNum = isStudentReport ? Number(
-      getValidNum(studentInfo?.allottedHours) ?? 
-      getValidNum(studentInfo?.allocatedHours) ?? 
-      getValidNum(acadGuideline?.allottedHours) ?? 
-      getValidNum(acadGuideline?.allocatedHours) ?? 
-      getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-      getValidNum(batchInfo?.allottedHours) ?? 
-      getValidNum(batchInfo?.allocatedHours) ?? 
-      (topicsHours > 0 ? topicsHours : null) ?? 
-      fallbackAcadHours ?? 
-      (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+      (batchInfo?.useSessionTimes && getSessionTimesTotalHours(batchInfo) > 0)
+        ? getSessionTimesTotalHours(batchInfo)
+        : (
+          getValidNum(studentInfo?.allottedHours) ?? 
+          getValidNum(studentInfo?.allocatedHours) ?? 
+          getValidNum(acadGuideline?.allottedHours) ?? 
+          getValidNum(acadGuideline?.allocatedHours) ?? 
+          getValidNum(acadGuideline?.totalAllocatedHours) ?? 
+          getValidNum(batchInfo?.allottedHours) ?? 
+          getValidNum(batchInfo?.allocatedHours) ?? 
+          (topicsHours > 0 ? topicsHours : null) ?? 
+          fallbackAcadHours ?? 
+          (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+        )
     ) : 0;
     const daysSelected = getSelectedDaysCount(startDate, endDate);
     const allottedHoursNum = Number((baseAllottedHoursNum * daysSelected).toFixed(2));
@@ -941,6 +979,11 @@ function MonitoringGrid() {
                           {getModeIcon(pc.currentMode)}
                           <span className="truncate max-w-[90px]">{pc.currentMode}</span>
                         </div>
+                        {pc.currentSession && (
+                          <div className="px-2 py-0.5 rounded bg-studio-accent-purple/15 border border-studio-accent-purple/20 text-studio-accent-purple font-bold text-[9px] leading-none uppercase tracking-wide">
+                            {pc.currentSession}
+                          </div>
+                        )}
                         {pc.isRendering && (
                           <div className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 flex items-center gap-1 text-[8px] font-extrabold text-amber-300 leading-none animate-pulse" title="15-min idle auto-logout is paused for long render">
                             <Sparkles className="h-2.5 w-2.5 text-amber-400 animate-spin-slow" />
@@ -1143,16 +1186,20 @@ function MonitoringGrid() {
                   const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
 
                   const baseAllottedHoursNum = Number(
-                    getValidNum(studentInfo?.allottedHours) ?? 
-                    getValidNum(studentInfo?.allocatedHours) ?? 
-                    getValidNum(acadGuideline?.allottedHours) ?? 
-                    getValidNum(acadGuideline?.allocatedHours) ?? 
-                    getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-                    getValidNum(batchInfo?.allottedHours) ?? 
-                    getValidNum(batchInfo?.allocatedHours) ?? 
-                    (topicsHours > 0 ? topicsHours : null) ?? 
-                    fallbackAcadHours ?? 
-                    (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+                    (batchInfo?.useSessionTimes && getSessionTimesTotalHours(batchInfo) > 0)
+                      ? getSessionTimesTotalHours(batchInfo)
+                      : (
+                        getValidNum(studentInfo?.allottedHours) ?? 
+                        getValidNum(studentInfo?.allocatedHours) ?? 
+                        getValidNum(acadGuideline?.allottedHours) ?? 
+                        getValidNum(acadGuideline?.allocatedHours) ?? 
+                        getValidNum(acadGuideline?.totalAllocatedHours) ?? 
+                        getValidNum(batchInfo?.allottedHours) ?? 
+                        getValidNum(batchInfo?.allocatedHours) ?? 
+                        (topicsHours > 0 ? topicsHours : null) ?? 
+                        fallbackAcadHours ?? 
+                        (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
+                      )
                   );
                   const daysSelected = getSelectedDaysCount(startDate, endDate);
                   const allottedHoursNum = Number((baseAllottedHoursNum * daysSelected).toFixed(2));

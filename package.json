@@ -4,7 +4,7 @@
   "description": "Student machine logging client and admin monitoring dashboard for VFX & Animation AI Lab",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nfsailab/VFX-Machine-Management.git"
+    "url": "https://github.com/nfsailab/Pivot.git"
   },
   "main": "electron/main.js",
   "scripts": {
@@ -15,13 +15,15 @@
     "electron:build": "npm run build && electron-builder",
     "electron:build:student": "npm run build && electron-builder -c electron-builder-student.json",
     "electron:build:hod": "npm run build && electron-builder -c electron-builder-hod.json",
-    "electron:build:all": "npm run build && electron-builder -c electron-builder-student.json && electron-builder -c electron-builder-hod.json"
+    "electron:build:all": "npm run build && electron-builder -c electron-builder-student.json && electron-builder -c electron-builder-hod.json",
+    "electron:deploy:all": "node publish-github.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "electron-updater": "^6.8.9",
+    "esbuild": "^0.28.1",
     "firebase": "^10.8.0",
     "lucide-react": "^0.331.0",
     "react": "^18.2.0",

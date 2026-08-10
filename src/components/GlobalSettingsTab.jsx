@@ -21,6 +21,39 @@ import {
   Sparkles
 } from 'lucide-react';
 
+const getSessionTimesTotalHours = (batch) => {
+  if (!batch || !batch.useSessionTimes || !batch.sessionTimes || !Array.isArray(batch.sessionTimes)) return 0;
+  
+  const parseTimeToMinutes = (str) => {
+    const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ampm = m[3] ? m[3].toUpperCase() : null;
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+
+  let totalMins = 0;
+  for (const s of batch.sessionTimes) {
+    if (!s) continue;
+    const timing = typeof s === 'string' ? s : s.timing;
+    if (!timing) continue;
+    const parts = timing.split(/\s*[-–to]+\s*/i);
+    if (parts.length === 2) {
+      const start = parseTimeToMinutes(parts[0]);
+      const end = parseTimeToMinutes(parts[1]);
+      if (start !== null && end !== null) {
+        let diff = end - start;
+        if (diff < 0) diff += 24 * 60;
+        totalMins += diff;
+      }
+    }
+  }
+  return Number((totalMins / 60).toFixed(2));
+};
+
 function GlobalSettingsTab() {
   // Collection States
   const [batches, setBatches] = useState([]);
@@ -571,53 +604,6 @@ function GlobalSettingsTab() {
                       <p className="font-semibold text-white">{student.name}</p>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-[10px] text-slate-500">{student.batch}</span>
-                        {(student.totalHours || student.totalSeconds > 0) && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-studio-950 border border-emerald-500/30 text-emerald-400 font-mono font-bold">
-                            {formatStudentTime(student)} used
-                          </span>
-                        )}
-                        {(() => {
-                          const batchNameTrimmed = (student.batch || '').trim().toLowerCase();
-                          const batchObj = batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
-                          const acadGuideline = academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
-                          const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
-                          const anyAcadWithTopics = academicSettingsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
-                          const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
-                          const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
-
-                          const allottedNum = Number(
-                            getValidNum(student.allottedHours) ?? 
-                            getValidNum(student.allocatedHours) ?? 
-                            getValidNum(acadGuideline?.allottedHours) ?? 
-                            getValidNum(acadGuideline?.allocatedHours) ?? 
-                            getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-                            getValidNum(batchObj?.allottedHours) ?? 
-                            getValidNum(batchObj?.allocatedHours) ?? 
-                            (topicsHours > 0 ? topicsHours : null) ?? 
-                            fallbackAcadHours ?? 
-                            (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
-                          );
-                          const studentLogs = logsList.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (student.name || '').toLowerCase());
-                          const logsTotalSecs = studentLogs.reduce((acc, l) => {
-                            const d = Number(l.durationSecs) || (l.endTime && l.startTime ? Math.round((new Date(l.endTime) - new Date(l.startTime)) / 1000) : 0);
-                            return acc + (isNaN(d) || d < 0 ? 0 : d);
-                          }, 0);
-                          const actualSecs = Math.max(
-                            Number(student.totalSeconds || 0),
-                            Math.round(Number(student.totalHours || 0) * 3600),
-                            logsTotalSecs
-                          );
-                          const diffSecs = (allottedNum * 3600) - actualSecs;
-                          return (
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold border ${
-                              diffSecs >= 0 
-                                ? 'bg-studio-950 border-studio-accent-blue/30 text-studio-accent-blue' 
-                                : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-                            }`}>
-                              {allottedNum}h Allotted ({diffSecs >= 0 ? `${Math.floor(diffSecs / 3600)}h ${Math.floor((diffSecs % 3600) / 60)}m left` : `${Math.floor(Math.abs(diffSecs) / 3600)}h ${Math.floor((Math.abs(diffSecs) % 3600) / 60)}m over`})
-                            </span>
-                          );
-                        })()}
                       </div>
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition duration-150">
