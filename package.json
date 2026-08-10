@@ -4,7 +4,7 @@
   "description": "Student machine logging client and admin monitoring dashboard for VFX & Animation AI Lab",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nfsailab/Pivot.git"
+    "url": "https://github.com/nfsailab/Pivot-Students-Management.git"
   },
   "main": "electron/main.js",
   "scripts": {

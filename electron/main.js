@@ -518,7 +518,7 @@ async function performMultiProviderUpdateCheck() {
     autoUpdater.setFeedURL({
       provider: 'github',
       owner: 'nfsailab',
-      repo: 'Pivot'
+      repo: 'Pivot-Students-Management'
     });
 
     const result = await autoUpdater.checkForUpdates();
