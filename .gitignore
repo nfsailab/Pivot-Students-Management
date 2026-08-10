@@ -56,3 +56,10 @@ Thumbs.db
 .gemini/
 brain/
 scratch/
+
+# Temporary drive uploads and firebase/git caches
+.tmp.driveupload/
+.firebase/
+dist-electron-old/
+Pivot/
+VFX Machine Management/
