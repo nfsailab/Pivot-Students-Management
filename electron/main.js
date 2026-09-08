@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
@@ -73,6 +73,51 @@ function killWatchdog() {
     }
     watchdogProcess = null;
   }
+  if (process.platform === 'win32') {
+    try {
+      const { exec } = require('child_process');
+      exec('taskkill /F /IM watchdog.exe /T', () => {});
+    } catch (e) {}
+  }
+}
+
+// Emergency authorized application quit (triggered via secret shortcut)
+function emergencyQuitApp() {
+  logToFile('Emergency quit initiated via secret shortcut (Ctrl+Alt+Shift+Q).');
+  console.log('⚡ Emergency quit initiated via secret shortcut (Ctrl+Alt+Shift+Q).');
+
+  allowAppQuit = true;
+  killWatchdog();
+
+  // Close notification window if open
+  if (notificationWindow && !notificationWindow.isDestroyed()) {
+    try {
+      notificationWindow.destroy();
+    } catch (e) {}
+    notificationWindow = null;
+  }
+
+  // If mainWindow exists, request fast session cleanup before exit
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.setClosable(true);
+      mainWindow.webContents.send('emergency-exit-cleanup');
+    } catch (err) {
+      logToFile(`Error sending cleanup event: ${err.message}`);
+    }
+  }
+
+  // Force close within 500ms even if renderer does not respond
+  setTimeout(() => {
+    try {
+      killWatchdog();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setClosable(true);
+        mainWindow.destroy();
+      }
+    } catch (e) {}
+    app.quit();
+  }, 500);
 }
 
 function createWindow() {
@@ -165,11 +210,33 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  // Register secret emergency shortcut to exit student client (Ctrl + Alt + Shift + Q)
+  try {
+    const emergencyShortcut = 'CommandOrControl+Alt+Shift+Q';
+    const registered = globalShortcut.register(emergencyShortcut, () => {
+      emergencyQuitApp();
+    });
+
+    if (registered) {
+      logToFile(`Registered secret emergency shortcut: ${emergencyShortcut}`);
+      console.log(`🔒 Registered secret emergency shortcut: ${emergencyShortcut}`);
+    } else {
+      logToFile(`Failed to register secret emergency shortcut: ${emergencyShortcut}`);
+      console.warn(`Failed to register secret emergency shortcut: ${emergencyShortcut}`);
+    }
+  } catch (err) {
+    logToFile(`Error registering global shortcut: ${err.message}`);
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
@@ -182,6 +249,18 @@ app.on('window-all-closed', () => {
 ipcMain.handle('get-system-idle-time', () => {
   const { powerMonitor } = require('electron');
   return powerMonitor.getSystemIdleTime();
+});
+
+// App version and external browser launcher handlers
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
+ipcMain.on('open-external', (event, url) => {
+  try {
+    require('electron').shell.openExternal(url);
+  } catch (err) {
+    console.error('Failed to open external link:', err);
+  }
 });
 
 // IPC handler to exit application from React UI

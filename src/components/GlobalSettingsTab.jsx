@@ -60,7 +60,6 @@ function GlobalSettingsTab() {
   const [students, setStudents] = useState([]);
   const [modes, setModes] = useState([]);
   const [academicSettingsList, setAcademicSettingsList] = useState([]);
-  const [logsList, setLogsList] = useState([]);
 
   // Form inputs
   const [newBatchName, setNewBatchName] = useState('');
@@ -108,16 +107,11 @@ function GlobalSettingsTab() {
       setAcademicSettingsList(data || []);
     });
 
-    const unsubLogs = subscribeCollection('activity_logs', (data) => {
-      setLogsList(data || []);
-    });
-
     return () => {
       unsubBatches();
       unsubStudents();
       unsubModes();
       unsubAcad();
-      unsubLogs();
     };
   }, []);
 

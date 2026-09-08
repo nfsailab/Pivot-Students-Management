@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { logoutHOD, isMockMode } from '../firebase';
+import { logoutHOD, isMockMode, subscribeCollection } from '../firebase';
 import { 
   LayoutGrid, 
   Settings, 
@@ -34,116 +34,61 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState(false);
 
+  const [downloadUrl, setDownloadUrl] = useState('');
+
+  // Fetch local version from Electron on mount
   useEffect(() => {
-    if (window.electronAPI) {
-      const cleanups = [];
-      if (typeof window.electronAPI.onUpdateStatus === 'function') {
-        cleanups.push(window.electronAPI.onUpdateStatus((data) => {
-          setIsUpdating(true);
-          setUpdateStatus(data?.text || 'Checking for updates...');
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateAvailable === 'function') {
-        cleanups.push(window.electronAPI.onUpdateAvailable((info) => {
-          setTargetVersion(info?.version || 'New Version');
-          setIsUpdating(false);
-          setUpdateAvailable(true);
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateNotAvailable === 'function') {
-        cleanups.push(window.electronAPI.onUpdateNotAvailable((info) => {
-          setIsUpdating(false);
-          setUpdateStatus('');
-          alert(`You are up to date! Currently running version ${info?.version || appVersion}.`);
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateProgress === 'function') {
-        cleanups.push(window.electronAPI.onUpdateProgress((prog) => {
-          setIsUpdating(true);
-          setUpdateStatus('Downloading update...');
-          setUpdateProgress(Math.round(prog?.percent || 0));
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateDownloaded === 'function') {
-        cleanups.push(window.electronAPI.onUpdateDownloaded((info) => {
-          setIsUpdating(false);
-          setUpdateStatus('Applying updates...');
-          if (info?.version) {
-            localStorage.setItem('hod_client_version', info.version);
-            setAppVersion(info.version);
-          }
-          if (confirm(`Update v${info?.version || ''} downloaded successfully! Restart now to install?`)) {
-            window.electronAPI.installUpdate();
-          }
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateError === 'function') {
-        cleanups.push(window.electronAPI.onUpdateError((err) => {
-          setIsUpdating(false);
-          setUpdateStatus('');
-          let errMsg = err?.message || (typeof err === 'string' ? err : 'Failed to check updates.');
-          if (errMsg.includes('404') || errMsg.includes('releases.atom') || errMsg.includes('latest.yml')) {
-            alert(`You are up to date! Currently running version ${appVersion}. No new update releases found on server.`);
-          } else {
-            if (errMsg.includes('Headers:')) {
-              errMsg = errMsg.split('Headers:')[0].trim();
-            }
-            alert(`Update Notice: ${errMsg}`);
-          }
-        }));
-      }
-      return () => cleanups.forEach(fn => fn && fn());
+    if (window.electronAPI && typeof window.electronAPI.getVersion === 'function') {
+      window.electronAPI.getVersion()
+        .then(ver => {
+          if (ver) setAppVersion(ver);
+        })
+        .catch(err => console.error('Failed to get app version:', err));
     }
+  }, []);
+
+  // Listen to Firestore version updates
+  useEffect(() => {
+    const unsubscribe = subscribeCollection('app_versions', (versions) => {
+      const hodConfig = versions.find(v => v.id === 'hod');
+      if (hodConfig) {
+        setTargetVersion(hodConfig.version);
+        setDownloadUrl(hodConfig.downloadUrl);
+        if (hodConfig.version !== appVersion) {
+          setUpdateAvailable(true);
+        } else {
+          setUpdateAvailable(false);
+        }
+      }
+    });
+    return () => unsubscribe && unsubscribe();
   }, [appVersion]);
 
   const handleCheckUpdates = () => {
-    if (window.electronAPI && typeof window.electronAPI.checkForUpdates === 'function') {
-      setIsUpdating(true);
-      setUpdateStatus('Checking for updates...');
-      window.electronAPI.checkForUpdates();
-    } else {
-      // Fallback for non-Electron / web demo mode
-      setIsUpdating(true);
-      setUpdateStatus('Checking for updates...');
-      setTimeout(() => {
-        const parts = appVersion.split('.');
-        const lastNum = parseInt(parts[parts.length - 1]) || 0;
-        const nextVersion = [...parts.slice(0, -1), lastNum + 1].join('.');
-        setTargetVersion(nextVersion);
-        setUpdateAvailable(true);
-      }, 1500);
-    }
+    setIsUpdating(true);
+    setUpdateStatus('Checking for updates...');
+    setTimeout(() => {
+      setIsUpdating(false);
+      setUpdateStatus('');
+      if (updateAvailable) {
+        // The modal will open automatically in UI
+      } else {
+        alert(`You are up to date! Currently running version ${appVersion}.`);
+      }
+    }, 1000);
   };
 
   const startUpdateDownload = () => {
     setUpdateAvailable(false);
-    if (window.electronAPI && typeof window.electronAPI.startUpdateDownload === 'function') {
-      setIsUpdating(true);
-      setUpdateProgress(0);
-      setUpdateStatus('Downloading update...');
-      window.electronAPI.startUpdateDownload();
+    setIsUpdating(false);
+    if (downloadUrl) {
+      if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+        window.electronAPI.openExternal(downloadUrl);
+      } else {
+        window.open(downloadUrl, '_blank');
+      }
     } else {
-      // Fallback for non-Electron / web demo mode
-      setUpdateProgress(0);
-      setUpdateStatus('Downloading update...');
-      setIsUpdating(true);
-      const interval = setInterval(() => {
-        setUpdateProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setUpdateStatus('Applying updates...');
-            setTimeout(() => {
-              localStorage.setItem('hod_client_version', targetVersion);
-              setAppVersion(targetVersion);
-              setIsUpdating(false);
-              alert(`Update applied successfully! Restarting HOD Dashboard to version v${targetVersion}...`);
-              window.location.reload();
-            }, 1500);
-            return 100;
-          }
-          return prev + 10;
-        });
-      }, 200);
+      alert('Update link is not configured in Firestore. Please contact the HOD.');
     }
   };
 

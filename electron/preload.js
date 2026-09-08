@@ -40,6 +40,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('perform-auto-logout', listener);
     return () => ipcRenderer.removeListener('perform-auto-logout', listener);
   },
+  onEmergencyExitCleanup: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('emergency-exit-cleanup', listener);
+    return () => ipcRenderer.removeListener('emergency-exit-cleanup', listener);
+  },
   checkForUpdates: () => ipcRenderer.send('check-for-updates'),
   startUpdateDownload: () => ipcRenderer.send('start-update-download'),
   installUpdate: () => ipcRenderer.send('install-update'),
@@ -73,6 +78,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-error', listener);
     return () => ipcRenderer.removeListener('update-error', listener);
   },
+  getVersion: () => ipcRenderer.invoke('get-app-version'),
+  openExternal: (url) => ipcRenderer.send('open-external', url),
 });
 
 console.log('Preload script loaded successfully. Mode:', appMode);

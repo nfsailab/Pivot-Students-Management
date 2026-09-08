@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import nailLogo from '../nail-logo.png';
 import { 
   subscribeCollection, 
-  addDocument, 
-  updateDocument, 
+  subscribeDocument,
+  getDocument,
+  addDocument,
+  updateDocument,
   isMockMode 
 } from '../firebase';
 import { 
@@ -93,66 +95,34 @@ function StudentClient({ onSessionStateChange }) {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState(false);
 
+  const [downloadUrl, setDownloadUrl] = useState('');
+
+  // Fetch local version from Electron on mount
   useEffect(() => {
-    if (window.electronAPI) {
-      const cleanups = [];
-      if (typeof window.electronAPI.onUpdateStatus === 'function') {
-        cleanups.push(window.electronAPI.onUpdateStatus((data) => {
-          setIsUpdating(true);
-          setUpdateStatus(data?.text || 'Checking for updates...');
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateAvailable === 'function') {
-        cleanups.push(window.electronAPI.onUpdateAvailable((info) => {
-          setTargetVersion(info?.version || 'New Version');
-          setIsUpdating(false);
-          setUpdateAvailable(true);
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateNotAvailable === 'function') {
-        cleanups.push(window.electronAPI.onUpdateNotAvailable((info) => {
-          setIsUpdating(false);
-          setUpdateStatus('');
-          alert(`You are up to date! Currently running version ${info?.version || appVersion}.`);
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateProgress === 'function') {
-        cleanups.push(window.electronAPI.onUpdateProgress((prog) => {
-          setIsUpdating(true);
-          setUpdateStatus('Downloading update packages...');
-          setUpdateProgress(Math.round(prog?.percent || 0));
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateDownloaded === 'function') {
-        cleanups.push(window.electronAPI.onUpdateDownloaded((info) => {
-          setIsUpdating(false);
-          setUpdateStatus('Applying updates...');
-          if (info?.version) {
-            localStorage.setItem('student_client_version', info.version);
-            setAppVersion(info.version);
-          }
-          if (confirm(`Update v${info?.version || ''} downloaded successfully! Restart now to install?`)) {
-            window.electronAPI.installUpdate();
-          }
-        }));
-      }
-      if (typeof window.electronAPI.onUpdateError === 'function') {
-        cleanups.push(window.electronAPI.onUpdateError((err) => {
-          setIsUpdating(false);
-          setUpdateStatus('');
-          let errMsg = err?.message || (typeof err === 'string' ? err : 'Failed to check updates.');
-          if (errMsg.includes('404') || errMsg.includes('releases.atom') || errMsg.includes('latest.yml')) {
-            alert(`You are up to date! Currently running version ${appVersion}. No new update releases found on server.`);
-          } else {
-            if (errMsg.includes('Headers:')) {
-              errMsg = errMsg.split('Headers:')[0].trim();
-            }
-            alert(`Update Notice: ${errMsg}`);
-          }
-        }));
-      }
-      return () => cleanups.forEach(fn => fn && fn());
+    if (window.electronAPI && typeof window.electronAPI.getVersion === 'function') {
+      window.electronAPI.getVersion()
+        .then(ver => {
+          if (ver) setAppVersion(ver);
+        })
+        .catch(err => console.error('Failed to get app version:', err));
     }
+  }, []);
+
+  // Listen to Firestore version updates
+  useEffect(() => {
+    const unsubscribe = subscribeCollection('app_versions', (versions) => {
+      const studentConfig = versions.find(v => v.id === 'student');
+      if (studentConfig) {
+        setTargetVersion(studentConfig.version);
+        setDownloadUrl(studentConfig.downloadUrl);
+        if (studentConfig.version !== appVersion) {
+          setUpdateAvailable(true);
+        } else {
+          setUpdateAvailable(false);
+        }
+      }
+    });
+    return () => unsubscribe && unsubscribe();
   }, [appVersion]);
 
   // Local Alerts & Timing States
@@ -194,10 +164,6 @@ function StudentClient({ onSessionStateChange }) {
       setModes(list);
     });
 
-    const unsubComps = subscribeCollection('computers', (data) => {
-      setComputers(data);
-    });
-
     const unsubAcad = subscribeCollection('settings_academic', (data) => {
       setAcadConfigsList(data);
     });
@@ -214,22 +180,28 @@ function StudentClient({ onSessionStateChange }) {
       setGenaiConfigsList(data);
     });
 
-    const unsubLogs = subscribeCollection('activity_logs', (data) => {
-      setLogsList(data || []);
-    });
-
     return () => {
       unsubBatches();
       unsubStudents();
       unsubModes();
-      unsubComps();
       unsubAcad();
       unsubProd();
       unsubRes();
       unsubGenai();
-      unsubLogs();
     };
   }, []);
+
+  // Listen to the selected/active computer document in real-time (reduces reads by 96%)
+  useEffect(() => {
+    let unsubComp = null;
+    const pcId = activeSession ? activeSession.computerId : selectedPC;
+    if (pcId) {
+      unsubComp = subscribeDocument('computers', pcId, (docData) => {
+        setComputers(docData ? [docData] : []);
+      });
+    }
+    return () => unsubComp && unsubComp();
+  }, [selectedPC, activeSession]);
 
   // 2. Cascade Filter: Student list filters automatically based on selected Batch
   const filteredStudents = students.filter(s => s.batch === selectedBatch);
@@ -425,11 +397,12 @@ function StudentClient({ onSessionStateChange }) {
     }
   }, []);
 
-  // IPC listeners for shutdown attempt and auto-logout
+  // IPC listeners for shutdown attempt, auto-logout, and emergency exit
   useEffect(() => {
     if (window.electronAPI) {
       let cleanupShutdown = () => {};
       let cleanupAutoLogout = () => {};
+      let cleanupEmergencyExit = () => {};
 
       if (typeof window.electronAPI.onShutdownAttempt === 'function') {
         cleanupShutdown = window.electronAPI.onShutdownAttempt(() => {
@@ -450,11 +423,54 @@ function StudentClient({ onSessionStateChange }) {
         });
       }
 
+      if (typeof window.electronAPI.onEmergencyExitCleanup === 'function') {
+        cleanupEmergencyExit = window.electronAPI.onEmergencyExitCleanup(async () => {
+          try {
+            if (sessionRef.current) {
+              await handleLogout(false, 'Emergency Exit (Secret Shortcut)');
+            }
+          } catch (e) {
+            console.error('Error during emergency exit cleanup:', e);
+          } finally {
+            if (typeof window.electronAPI.quitApp === 'function') {
+              window.electronAPI.quitApp();
+            }
+          }
+        });
+      }
+
       return () => {
         cleanupShutdown();
         cleanupAutoLogout();
+        cleanupEmergencyExit();
       };
     }
+  }, []);
+
+  // Secret emergency shortcut listener (Ctrl + Alt + Shift + Q) in window/DOM
+  useEffect(() => {
+    const handleEmergencyKeyDown = async (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && (e.key === 'Q' || e.key === 'q')) {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          if (sessionRef.current) {
+            await handleLogout(false, 'Emergency Exit (Secret Shortcut)');
+          }
+        } catch (err) {
+          console.error('Error logging out during emergency exit:', err);
+        } finally {
+          if (window.electronAPI && typeof window.electronAPI.quitApp === 'function') {
+            window.electronAPI.quitApp();
+          } else {
+            console.log('⚡ Emergency exit triggered via Ctrl+Alt+Shift+Q');
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleEmergencyKeyDown, true);
+    return () => window.removeEventListener('keydown', handleEmergencyKeyDown, true);
   }, []);
 
   // Track local DOM activity as fallback for non-Electron / web environments
@@ -628,54 +644,30 @@ function StudentClient({ onSessionStateChange }) {
   // CLIENT SOFTWARE UPDATE ACTION
   // ----------------------------------------------------
   const handleCheckUpdates = () => {
-    if (window.electronAPI && typeof window.electronAPI.checkForUpdates === 'function') {
-      setIsUpdating(true);
-      setUpdateStatus('Checking for updates...');
-      window.electronAPI.checkForUpdates();
-    } else {
-      setIsUpdating(true);
-      setUpdateStatus('Checking for updates...');
-      setTimeout(() => {
-        const parts = appVersion.split('.');
-        const lastNum = parseInt(parts[parts.length - 1]) || 0;
-        const nextVersion = [...parts.slice(0, -1), lastNum + 1].join('.');
-        setTargetVersion(nextVersion);
-        setUpdateAvailable(true);
-      }, 1500);
-    }
+    setIsUpdating(true);
+    setUpdateStatus('Checking for updates...');
+    setTimeout(() => {
+      setIsUpdating(false);
+      setUpdateStatus('');
+      if (updateAvailable) {
+        // The modal will open automatically in UI
+      } else {
+        alert(`You are up to date! Currently running version ${appVersion}.`);
+      }
+    }, 1000);
   };
 
   const startUpdateDownload = () => {
     setUpdateAvailable(false);
-    if (window.electronAPI && typeof window.electronAPI.startUpdateDownload === 'function') {
-      setIsUpdating(true);
-      setUpdateProgress(0);
-      setUpdateStatus('Downloading update packages...');
-      window.electronAPI.startUpdateDownload();
+    setIsUpdating(false);
+    if (downloadUrl) {
+      if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+        window.electronAPI.openExternal(downloadUrl);
+      } else {
+        window.open(downloadUrl, '_blank');
+      }
     } else {
-      setUpdateProgress(0);
-      setUpdateStatus('Downloading update packages...');
-      setIsUpdating(true);
-      const interval = setInterval(() => {
-        setUpdateProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setUpdateStatus('Extracting & verifying assets...');
-            setTimeout(() => {
-              setUpdateStatus('Applying updates...');
-              setTimeout(() => {
-                localStorage.setItem('student_client_version', targetVersion);
-                setAppVersion(targetVersion);
-                setIsUpdating(false);
-                alert(`Update applied successfully! Restarting client to version v${targetVersion}...`);
-                window.location.reload();
-              }, 1500);
-            }, 1550);
-            return 100;
-          }
-          return prev + 10;
-        });
-      }, 300);
+      alert('Update link is not configured in Firestore. Please contact the HOD.');
     }
   };
 

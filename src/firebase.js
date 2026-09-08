@@ -223,6 +223,12 @@ const initLocalStorage = () => {
   if (!localStorage.getItem('vfx_activity_logs')) {
     localStorage.setItem('vfx_activity_logs', JSON.stringify([]));
   }
+  if (!localStorage.getItem('vfx_app_versions')) {
+    localStorage.setItem('vfx_app_versions', JSON.stringify([
+      { id: 'student', version: '1.0.0-beta', downloadUrl: 'https://drive.google.com/drive/folders/your_student_folder_id' },
+      { id: 'hod', version: '1.0.0-beta', downloadUrl: 'https://drive.google.com/drive/folders/your_hod_folder_id' }
+    ]));
+  }
   if (!localStorage.getItem('vfx_auth_user')) {
     localStorage.setItem('vfx_auth_user', JSON.stringify(null));
   }
@@ -238,6 +244,14 @@ const listeners = {};
 const triggerListeners = (collectionName, data) => {
   if (listeners[collectionName]) {
     listeners[collectionName].forEach(callback => callback(data));
+  }
+  if (Array.isArray(data)) {
+    data.forEach(item => {
+      const listenerKey = `${collectionName}_${item.id}`;
+      if (listeners[listenerKey]) {
+        listeners[listenerKey].forEach(callback => callback(item));
+      }
+    });
   }
 };
 
@@ -279,6 +293,58 @@ export const subscribeCollection = (collectionName, callback) => {
     // Return unsubscribe function
     return () => {
       listeners[collectionName] = listeners[collectionName].filter(cb => cb !== callback);
+    };
+  }
+};
+
+/**
+ * Fetches a single document from a collection (one-time read).
+ */
+export const getDocument = async (collectionName, docId) => {
+  if (!isMockMode) {
+    const docRef = doc(db, collectionName, docId);
+    const snap = await getDoc(docRef);
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  } else {
+    const storageKey = `vfx_${collectionName}`;
+    const rawData = localStorage.getItem(storageKey);
+    const items = JSON.parse(rawData || '[]');
+    return items.find(item => item.id === docId) || null;
+  }
+};
+
+/**
+ * Subscribes to a single document updates (real-time).
+ */
+export const subscribeDocument = (collectionName, docId, callback) => {
+  if (!isMockMode) {
+    const docRef = doc(db, collectionName, docId);
+    return onSnapshot(docRef, (snapshot) => {
+      if (snapshot.exists()) {
+        callback({ id: snapshot.id, ...snapshot.data() });
+      } else {
+        callback(null);
+      }
+    }, (error) => {
+      console.error(`Firestore document subscribe error for ${collectionName}/${docId}:`, error);
+      callback(null);
+    });
+  } else {
+    const listenerKey = `${collectionName}_${docId}`;
+    if (!listeners[listenerKey]) {
+      listeners[listenerKey] = [];
+    }
+    listeners[listenerKey].push(callback);
+
+    // Initial trigger
+    const storageKey = `vfx_${collectionName}`;
+    const rawData = localStorage.getItem(storageKey);
+    const items = JSON.parse(rawData || '[]');
+    const docData = items.find(item => item.id === docId) || null;
+    callback(docData);
+
+    return () => {
+      listeners[listenerKey] = listeners[listenerKey].filter(cb => cb !== callback);
     };
   }
 };
@@ -496,6 +562,21 @@ const seedFirebaseDatabase = async () => {
       }
     }
 
+    // 9. Seed App Versions (for browser-based updater)
+    const versionsRef = collection(db, 'app_versions');
+    const versionsSnap = await getDocs(versionsRef);
+    if (versionsSnap.empty) {
+      console.log('🌱 Seeding default app versions to Firestore...');
+      await setDoc(doc(db, 'app_versions', 'student'), {
+        version: '1.0.0-beta',
+        downloadUrl: 'https://drive.google.com/drive/folders/your_student_folder_id'
+      });
+      await setDoc(doc(db, 'app_versions', 'hod'), {
+        version: '1.0.0-beta',
+        downloadUrl: 'https://drive.google.com/drive/folders/your_hod_folder_id'
+      });
+    }
+
     console.log('✅ Firebase Firestore seeder check completed successfully!');
   } catch (error) {
     console.error('❌ Error during Firebase Firestore seeding:', error);
@@ -512,7 +593,6 @@ if (hasValidFirebaseConfig) {
     auth = getAuth(app);
     isMockMode = false;
     console.log('🔥 Connected successfully to Firebase & Firestore!');
-    seedFirebaseDatabase();
   } catch (error) {
     console.error('Failed to initialize Firebase, falling back to Mock Mode:', error);
     isMockMode = true;
@@ -527,9 +607,11 @@ if (hasValidFirebaseConfig) {
   initLocalStorage();
 }
 
-export { db, auth, isMockMode };
+export { db, auth, isMockMode, seedFirebaseDatabase };
 export default {
   subscribeCollection,
+  getDocument,
+  subscribeDocument,
   addDocument,
   updateDocument,
   deleteDocument,
