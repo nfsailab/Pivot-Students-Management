@@ -11,7 +11,8 @@ import {
   ChevronRight,
   Tv,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
 import logoImg from '../logo.png';
 import nailLogo from '../nail-logo.png';
@@ -22,9 +23,9 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   // Client Update States
   const [appVersion, setAppVersion] = useState(() => {
     const stored = localStorage.getItem('hod_client_version');
-    if (!stored || stored !== '1.0 Beta') {
-      localStorage.setItem('hod_client_version', '1.0 Beta');
-      return '1.0 Beta';
+    if (!stored || stored === '1.0 Beta') {
+      localStorage.setItem('hod_client_version', '1.0.0-beta');
+      return '1.0.0-beta';
     }
     return stored;
   });
@@ -33,6 +34,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   const [updateStatus, setUpdateStatus] = useState('');
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateDownloaded, setUpdateDownloaded] = useState(false);
 
   const [downloadUrl, setDownloadUrl] = useState('');
 
@@ -41,23 +43,90 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
     if (window.electronAPI && typeof window.electronAPI.getVersion === 'function') {
       window.electronAPI.getVersion()
         .then(ver => {
-          if (ver) setAppVersion(ver);
+          if (ver) {
+            setAppVersion(ver);
+            localStorage.setItem('hod_client_version', ver);
+          }
         })
         .catch(err => console.error('Failed to get app version:', err));
     }
   }, []);
 
-  // Listen to Firestore version updates
+  // Listen to Electron OTA GitHub auto-updater events
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    const unsubStatus = typeof window.electronAPI.onUpdateStatus === 'function'
+      ? window.electronAPI.onUpdateStatus((data) => {
+          setIsUpdating(true);
+          setUpdateStatus(data.text || 'Checking for updates...');
+        })
+      : null;
+
+    const unsubAvail = typeof window.electronAPI.onUpdateAvailable === 'function'
+      ? window.electronAPI.onUpdateAvailable((info) => {
+          setIsUpdating(false);
+          setUpdateStatus('');
+          if (info && info.version) setTargetVersion(info.version);
+          setUpdateAvailable(true);
+        })
+      : null;
+
+    const unsubNotAvail = typeof window.electronAPI.onUpdateNotAvailable === 'function'
+      ? window.electronAPI.onUpdateNotAvailable((info) => {
+          setIsUpdating(false);
+          setUpdateStatus('');
+          setUpdateAvailable(false);
+          alert(`You are up to date! Currently running version ${info?.version || appVersion}.`);
+        })
+      : null;
+
+    const unsubProgress = typeof window.electronAPI.onUpdateProgress === 'function'
+      ? window.electronAPI.onUpdateProgress((progressObj) => {
+          setIsUpdating(true);
+          const percent = Math.round(progressObj.percent || 0);
+          setUpdateProgress(percent);
+          setUpdateStatus(`Downloading update from GitHub... ${percent}%`);
+        })
+      : null;
+
+    const unsubDownloaded = typeof window.electronAPI.onUpdateDownloaded === 'function'
+      ? window.electronAPI.onUpdateDownloaded((info) => {
+          setIsUpdating(false);
+          setUpdateStatus('');
+          setUpdateAvailable(false);
+          setUpdateDownloaded(true);
+          if (info && info.version) setTargetVersion(info.version);
+        })
+      : null;
+
+    const unsubError = typeof window.electronAPI.onUpdateError === 'function'
+      ? window.electronAPI.onUpdateError((err) => {
+          setIsUpdating(false);
+          setUpdateStatus('');
+          alert(`Update notice: ${err?.message || 'Error checking for updates.'}`);
+        })
+      : null;
+
+    return () => {
+      if (unsubStatus) unsubStatus();
+      if (unsubAvail) unsubAvail();
+      if (unsubNotAvail) unsubNotAvail();
+      if (unsubProgress) unsubProgress();
+      if (unsubDownloaded) unsubDownloaded();
+      if (unsubError) unsubError();
+    };
+  }, [appVersion]);
+
+  // Listen to Firestore version updates (fallback for browser / non-packaged mode)
   useEffect(() => {
     const unsubscribe = subscribeCollection('app_versions', (versions) => {
       const hodConfig = versions.find(v => v.id === 'hod');
       if (hodConfig) {
         setTargetVersion(hodConfig.version);
         setDownloadUrl(hodConfig.downloadUrl);
-        if (hodConfig.version !== appVersion) {
+        if (hodConfig.version && hodConfig.version !== appVersion) {
           setUpdateAvailable(true);
-        } else {
-          setUpdateAvailable(false);
         }
       }
     });
@@ -65,30 +134,36 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   }, [appVersion]);
 
   const handleCheckUpdates = () => {
-    setIsUpdating(true);
-    setUpdateStatus('Checking for updates...');
-    setTimeout(() => {
-      setIsUpdating(false);
-      setUpdateStatus('');
-      if (updateAvailable) {
-        // The modal will open automatically in UI
-      } else {
-        alert(`You are up to date! Currently running version ${appVersion}.`);
-      }
-    }, 1000);
+    if (window.electronAPI && typeof window.electronAPI.checkForUpdates === 'function') {
+      setIsUpdating(true);
+      setUpdateStatus('Connecting to GitHub Releases...');
+      window.electronAPI.checkForUpdates();
+    } else {
+      setIsUpdating(true);
+      setUpdateStatus('Checking for updates...');
+      setTimeout(() => {
+        setIsUpdating(false);
+        setUpdateStatus('');
+        if (targetVersion && targetVersion !== appVersion) {
+          setUpdateAvailable(true);
+        } else {
+          alert(`You are up to date! Currently running version ${appVersion}.`);
+        }
+      }, 800);
+    }
   };
 
   const startUpdateDownload = () => {
     setUpdateAvailable(false);
-    setIsUpdating(false);
-    if (downloadUrl) {
-      if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
-        window.electronAPI.openExternal(downloadUrl);
-      } else {
-        window.open(downloadUrl, '_blank');
-      }
+    if (window.electronAPI && typeof window.electronAPI.startUpdateDownload === 'function') {
+      setIsUpdating(true);
+      setUpdateStatus('Starting download from GitHub...');
+      setUpdateProgress(0);
+      window.electronAPI.startUpdateDownload();
+    } else if (downloadUrl) {
+      window.open(downloadUrl, '_blank');
     } else {
-      alert('Update link is not configured in Firestore. Please contact the HOD.');
+      alert('Update link is not configured. Please contact the administrator.');
     }
   };
 
@@ -302,6 +377,38 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
                 <span className="text-[10px] text-slate-500 font-mono font-bold">{updateProgress}%</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {updateDownloaded && (
+        <div className="absolute inset-0 z-50 bg-studio-950/90 flex items-center justify-center p-6 pointer-events-auto">
+          <div className="w-full max-w-sm glass-panel-glow border-emerald-500/30 p-6 rounded-2xl shadow-glass-glow flex flex-col items-center text-center space-y-4 animate-scale-in">
+            <div className="h-12 w-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+              <CheckCircle2 className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-bold text-white tracking-wide uppercase">Update Ready</h3>
+            <p className="text-xs text-slate-400 leading-relaxed font-sans">
+              Version v{targetVersion} has been downloaded and is ready to install.
+            </p>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={() => setUpdateDownloaded(false)}
+                className="flex-1 py-2.5 bg-studio-800 hover:bg-studio-700 text-slate-300 font-bold rounded-xl text-xs uppercase tracking-wider transition border border-white/5"
+              >
+                Later
+              </button>
+              <button
+                onClick={() => {
+                  if (window.electronAPI && typeof window.electronAPI.installUpdate === 'function') {
+                    window.electronAPI.installUpdate();
+                  }
+                }}
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition shadow-glow-emerald"
+              >
+                Restart & Install
+              </button>
+            </div>
           </div>
         </div>
       )}
