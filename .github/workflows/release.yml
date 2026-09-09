@@ -1,4 +1,4 @@
-﻿name: Build and Release
+name: Build and Release
 
 on:
   push:
@@ -28,6 +28,11 @@ jobs:
 
       - name: Build React application
         run: npm run build
+
+      - name: Ensure watchdog.exe is compiled
+        shell: powershell
+        run: |
+          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /target:winexe /out:electron\watchdog.exe electron\watchdog.cs
 
       - name: Build and Publish Student Client
         env:

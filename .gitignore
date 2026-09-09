@@ -21,6 +21,7 @@ release/
 out/
 build/
 *.exe
+!electron/watchdog.exe
 *.dmg
 *.zip
 *.7z

@@ -38,10 +38,20 @@ function startWatchdog() {
 
   logToFile(`Spawning watchdog process: ${watchdogPath} for PID: ${process.pid}`);
 
+  if (!fs.existsSync(watchdogPath)) {
+    logToFile(`Watchdog executable not found at ${watchdogPath}. Skipping watchdog spawn.`);
+    return;
+  }
+
   try {
     watchdogProcess = spawn(watchdogPath, [process.pid.toString(), clientPath], {
       detached: true,
       stdio: 'ignore'
+    });
+
+    watchdogProcess.on('error', (err) => {
+      logToFile(`Watchdog process error: ${err.message}`);
+      watchdogProcess = null;
     });
 
     watchdogProcess.on('exit', (code) => {
