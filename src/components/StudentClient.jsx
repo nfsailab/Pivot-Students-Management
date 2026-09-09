@@ -411,7 +411,7 @@ function StudentClient({ onSessionStateChange }) {
           lastActive: new Date().toISOString(),
           startTime: startTimeToSync
         }).catch(err => console.error('Heartbeat update failed:', err));
-      }, 15000);
+      }, 10000);
     }
     return () => {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
@@ -485,10 +485,12 @@ function StudentClient({ onSessionStateChange }) {
 
       if (typeof window.electronAPI.onPerformAutoLogout === 'function') {
         cleanupAutoLogout = window.electronAPI.onPerformAutoLogout(() => {
-          handleLogout(false, 'Auto Logout (System Shutdown/Idle)');
-          if (typeof window.electronAPI.autoLogoutCompleted === 'function') {
-            window.electronAPI.autoLogoutCompleted();
+          if (isRenderingRef.current) {
+            console.log('Auto-logout triggered by main process, but RENDERING MODE is ON. Suppressing logout.');
+            return;
           }
+          console.log('Workstation idle >= 15 mins detected by main process. Logging out automatically.');
+          handleLogout(false, 'Auto Logout (Idle 15 Mins)');
         });
       }
 
@@ -852,6 +854,16 @@ function StudentClient({ onSessionStateChange }) {
     }
   };
 
+  // Safety guard: guarantee minimized state is false if no active session
+  useEffect(() => {
+    if (!activeSession && isMinimized) {
+      setIsMinimized(false);
+      if (window.electronAPI && typeof window.electronAPI.endSession === 'function') {
+        window.electronAPI.endSession();
+      }
+    }
+  }, [activeSession, isMinimized]);
+
   // ----------------------------------------------------
   // LOG OUT / END SESSION ACTION
   // ----------------------------------------------------
@@ -863,6 +875,12 @@ function StudentClient({ onSessionStateChange }) {
     if (!session) {
       isLoggingOutRef.current = false;
       return;
+    }
+
+    // Immediately restore window size and reset minimized state FIRST
+    setIsMinimized(false);
+    if (window.electronAPI && typeof window.electronAPI.endSession === 'function') {
+      window.electronAPI.endSession();
     }
 
     // Immediately clear activeSession state so that no effects or double-triggers can see it as active
@@ -1244,24 +1262,24 @@ function StudentClient({ onSessionStateChange }) {
                 window.electronAPI.maximizeWidget();
               }
             }}
-            className={`w-full h-full glass-panel p-2.5 rounded-2xl flex items-center justify-center gap-3 cursor-pointer transition duration-200 pointer-events-auto ${
+            className={`w-full h-full glass-panel px-3 py-1.5 rounded-full flex items-center justify-center gap-2.5 cursor-pointer transition duration-200 pointer-events-auto shadow-2xl ${
               activeMessage && !hasReadActiveMessage 
                 ? 'animate-alert-attention border-amber-500/80 bg-amber-500/10 opacity-100' 
-                : 'border-studio-accent-purple/20 hover:border-studio-accent-purple/40 opacity-50 hover:opacity-100'
+                : 'border-studio-accent-purple/30 hover:border-studio-accent-purple/60 opacity-80 hover:opacity-100'
             }`}
           >
-            <span className="relative flex h-2 w-2">
+            <span className="relative flex h-2 w-2 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{activeSession.computerId}</span>
+            <span className="text-[11px] font-bold text-slate-200 uppercase tracking-wider shrink-0">{activeSession.computerId}</span>
             {isRendering && (
-              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-[8px] font-extrabold text-amber-300 animate-pulse">
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-[8px] font-extrabold text-amber-300 animate-pulse shrink-0">
                 🎬 RENDERING
               </span>
             )}
-            <div className="h-3.5 w-[1px] bg-white/10"></div>
-            <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-white">
+            <div className="h-3.5 w-[1px] bg-white/10 shrink-0"></div>
+            <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-white shrink-0">
               <Clock className="h-3.5 w-3.5 text-studio-accent-purple" />
               <span>{formatTime(elapsedSeconds)}</span>
             </div>

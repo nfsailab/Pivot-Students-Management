@@ -159,13 +159,13 @@ function MonitoringGrid() {
     };
   }, []);
 
-  // Watchdog: detect if any computer marked online has stopped sending heartbeats (>45 seconds)
+  // Watchdog: detect if any computer marked online has stopped sending heartbeats (>120 seconds / 2 mins)
   useEffect(() => {
     const watchdog = setInterval(() => {
       computers.forEach(async (pc) => {
         if (pc.status === 'online' && pc.lastActive) {
           const elapsedSecs = (Date.now() - new Date(pc.lastActive).getTime()) / 1000;
-          if (elapsedSecs > 45) {
+          if (elapsedSecs > 120) {
             console.warn(`Watchdog detected forced shutdown or offline on ${pc.id}. Last active ${Math.floor(elapsedSecs)}s ago.`);
             try {
               const startMs = pc.startTime ? new Date(pc.startTime).getTime() : new Date(pc.lastActive).getTime();

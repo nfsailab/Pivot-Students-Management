@@ -149,6 +149,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      backgroundThrottling: false, // Prevent Chromium from throttling/suspending timers or painting when in background
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: [isStudentMode ? '--app-mode=student' : '--app-mode=admin']
     },
@@ -261,6 +262,23 @@ ipcMain.handle('get-system-idle-time', () => {
   return powerMonitor.getSystemIdleTime();
 });
 
+// Background Idle Auto-Logout Watchdog in Main Process (immune to Chromium background throttling)
+setInterval(() => {
+  if (!isSessionActive || !mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    const { powerMonitor } = require('electron');
+    const idleSeconds = powerMonitor.getSystemIdleTime();
+    // 15 Minutes = 900 seconds
+    if (idleSeconds >= 900) {
+      logToFile(`[Idle Watchdog] Workstation idle for ${idleSeconds}s (>= 900s). Triggering perform-auto-logout.`);
+      console.log(`[Idle Watchdog] Workstation idle for ${idleSeconds}s (>= 900s). Triggering perform-auto-logout.`);
+      mainWindow.webContents.send('perform-auto-logout');
+    }
+  } catch (err) {
+    logToFile(`[Idle Watchdog] Error checking idle time: ${err.message}`);
+  }
+}, 5000);
+
 // App version and external browser launcher handlers
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
@@ -322,6 +340,7 @@ ipcMain.on('auto-logout-completed', () => {
 
 function restoreDefaultWindowBounds() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  isMinimizedState = false;
   const winBounds = mainWindow.getBounds();
   const display = screen.getDisplayMatching(winBounds);
   const { x: displayX, y: displayY, width, height } = display.workArea;
@@ -342,7 +361,7 @@ function restoreDefaultWindowBounds() {
 ipcMain.on('session-start', () => {
   logToFile('IPC session-start event received.');
   isSessionActive = true;
-  if (isStudentMode && mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     isMinimizedState = false;
     const winBounds = mainWindow.getBounds();
     const display = screen.getDisplayMatching(winBounds);
@@ -364,37 +383,39 @@ ipcMain.on('session-start', () => {
 ipcMain.on('session-end', () => {
   logToFile('IPC session-end event received.');
   isSessionActive = false;
-  if (isStudentMode && mainWindow) {
-    isMinimizedState = false;
-    if (notificationWindow) {
-      notificationWindow.close();
+  isMinimizedState = false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (notificationWindow && !notificationWindow.isDestroyed()) {
+      try {
+        notificationWindow.close();
+      } catch (e) {}
     }
-    mainWindow.setAlwaysOnTop(true, 'screen-saver');
     restoreDefaultWindowBounds();
+    mainWindow.setAlwaysOnTop(isStudentMode, 'screen-saver');
   }
 });
 
 ipcMain.on('time-over', () => {
-  if (isStudentMode && mainWindow) {
-    isMinimizedState = false;
-    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  isMinimizedState = false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
     restoreDefaultWindowBounds();
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
   }
 });
 
 ipcMain.on('widget-minimize', () => {
-  if (isStudentMode && mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     isMinimizedState = true;
     const winBounds = mainWindow.getBounds();
     const display = screen.getDisplayMatching(winBounds);
     const { x: displayX, y: displayY, width, height } = display.workArea;
     
-    const widgetWidth = 200;
-    const widgetHeight = 60;
+    const widgetWidth = 220;
+    const widgetHeight = 52;
     
     mainWindow.setBounds({
       x: displayX + width - widgetWidth - 20,
-      y: displayY + height - widgetHeight - 20,
+      y: displayY + height - widgetHeight - 16,
       width: widgetWidth,
       height: widgetHeight
     });
@@ -464,6 +485,7 @@ function createNotificationWindow(message) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: ['--app-mode=notification']
     },
