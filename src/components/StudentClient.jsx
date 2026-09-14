@@ -896,8 +896,35 @@ function StudentClient({ onSessionStateChange }) {
       const durationSecs = Math.max(0, Math.floor((endMs - startMs) / 1000));
       const totalHours = Number((durationSecs / 3600).toFixed(2));
 
-      // 1. Write the completed session details to activity_logs
-      await addDocument('activity_logs', {
+      // 1. IMMEDIATELY update database PC document to 'offline' FIRST (and update local state optimistically)
+      // so that new logins are never blocked by Firestore network latency
+      if (!wasResetByAdmin) {
+        setComputers(prev => prev.map(c => c.id === session.computerId ? {
+          ...c,
+          status: 'offline',
+          currentUser: null,
+          currentMode: null,
+          currentTask: null,
+          isRendering: false,
+          startTime: null,
+          lastActive: new Date().toISOString()
+        } : c));
+
+        updateDocument('computers', session.computerId, {
+          status: 'offline',
+          lastLogoutStatus: logoutStatus,
+          currentUser: null,
+          currentMode: null,
+          currentTask: null,
+          isRendering: false,
+          startTime: null,
+          lastActive: new Date().toISOString(),
+          message: null
+        }).catch(err => console.error('Failed to update PC offline status:', err));
+      }
+
+      // 2. Write completed session details to activity_logs & update student total hours concurrently
+      const logPromise = addDocument('activity_logs', {
         studentId: session.studentName,
         computerId: session.computerId,
         mode: session.mode,
@@ -909,32 +936,19 @@ function StudentClient({ onSessionStateChange }) {
         totalHours: totalHours
       });
 
-      // Update student record in students collection with cumulative total hours
       const studentDoc = students.find(s => (s.name || '').toLowerCase() === (session.studentName || '').toLowerCase());
+      let studentPromise = Promise.resolve();
       if (studentDoc) {
         const newTotalSecs = (studentDoc.totalSeconds || 0) + durationSecs;
         const newTotalHours = Number((newTotalSecs / 3600).toFixed(2));
-        await updateDocument('students', studentDoc.id, {
+        studentPromise = updateDocument('students', studentDoc.id, {
           totalSeconds: newTotalSecs,
           totalHours: newTotalHours,
           lastLogoutTime: new Date().toISOString()
         });
       }
 
-      // 2. Clean up database PC document if normal logout
-      if (!wasResetByAdmin) {
-        await updateDocument('computers', session.computerId, {
-          status: 'offline',
-          lastLogoutStatus: logoutStatus,
-          currentUser: null,
-          currentMode: null,
-          currentTask: null,
-          isRendering: false,
-          startTime: null,
-          lastActive: new Date().toISOString(),
-          message: null
-        });
-      }
+      await Promise.allSettled([logPromise, studentPromise]);
 
       // 3. Reset local states
       setTodayWork('');
