@@ -6,6 +6,8 @@ const { spawn } = require('child_process');
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.allowPrerelease = true;
+autoUpdater.allowDowngrade = false;
 
 let mainWindow;
 let notificationWindow;
@@ -588,6 +590,13 @@ autoUpdater.on('error', (err) => {
     return;
   }
   let msg = err ? (err.message || err.toString()) : 'Error checking for updates';
+  if (msg.includes('No published versions on GitHub')) {
+    logToFile('AutoUpdater: No published versions found on GitHub.');
+    sendToWindows('update-error', {
+      message: `No published releases found on GitHub.\n\nTo trigger an update:\n1. Increase "version" in package.json (e.g. 1.0.1).\n2. Create and push a new release/tag (e.g. v1.0.1) on GitHub so GitHub Actions publishes the new version.`
+    });
+    return;
+  }
   if (msg.includes('404') || msg.includes('releases.atom') || msg.includes('latest.yml') || msg.includes('student.yml') || msg.includes('hod.yml')) {
     logToFile('AutoUpdater 404 error: Repository may be Private or Release is still in Draft state.');
     sendToWindows('update-error', { 
@@ -627,6 +636,7 @@ async function performMultiProviderUpdateCheck() {
 
   try {
     logToFile('Attempting update check via GitHub Releases...');
+    autoUpdater.allowPrerelease = true;
     autoUpdater.channel = isStudentMode ? 'student' : 'hod';
     autoUpdater.setFeedURL({
       provider: 'github',
@@ -642,6 +652,14 @@ async function performMultiProviderUpdateCheck() {
   } catch (err) {
     logToFile(`GitHub provider update check error: ${err ? err.message : err}`);
     const errStr = (err ? (err.message || err.toString()) : '').toLowerCase();
+
+    if (errStr.includes('no published versions on github')) {
+      sendToWindows('update-error', {
+        message: `No published releases found on GitHub.\n\nTo trigger an update:\n1. Increase "version" in package.json (e.g. 1.0.1).\n2. Create and push a new release/tag (e.g. v1.0.1) on GitHub so GitHub Actions publishes the new version.`
+      });
+      isCheckingUpdate = false;
+      return;
+    }
 
     // If check encountered a 404 (no release or yml file found on server yet)
     if (errStr.includes('404') || errStr.includes('releases.atom') || errStr.includes('yml')) {
