@@ -588,9 +588,11 @@ autoUpdater.on('error', (err) => {
     return;
   }
   let msg = err ? (err.message || err.toString()) : 'Error checking for updates';
-  if (msg.includes('404') || msg.includes('releases.atom') || msg.includes('latest.yml')) {
-    logToFile('AutoUpdater 404 error - treating as no update available.');
-    sendToWindows('update-not-available', { version: app.getVersion() });
+  if (msg.includes('404') || msg.includes('releases.atom') || msg.includes('latest.yml') || msg.includes('student.yml') || msg.includes('hod.yml')) {
+    logToFile('AutoUpdater 404 error: Repository may be Private or Release is still in Draft state.');
+    sendToWindows('update-error', { 
+      message: 'Could not fetch release from GitHub (404 Not Found). Please verify that:\n1. Your GitHub repository visibility is set to Public.\n2. The GitHub Release is Published (not Draft).\n3. A version higher than 1.0.0-beta is published.' 
+    });
     return;
   }
   if (msg.includes('Headers:')) {
@@ -643,8 +645,10 @@ async function performMultiProviderUpdateCheck() {
 
     // If check encountered a 404 (no release or yml file found on server yet)
     if (errStr.includes('404') || errStr.includes('releases.atom') || errStr.includes('yml')) {
-      logToFile('Update check returned 404 (no published release found on server). Treating as up-to-date.');
-      sendToWindows('update-not-available', { version: app.getVersion() });
+      logToFile('Update check returned 404: Repository is Private or Release is Draft.');
+      sendToWindows('update-error', { 
+        message: 'Could not fetch release from GitHub (404 Not Found).\n\nPlease check:\n1. GitHub Repository visibility is set to PUBLIC.\n2. Release is PUBLISHED (not Draft).\n3. Version in package.json was increased for the new release.' 
+      });
       isCheckingUpdate = false;
       return;
     }
