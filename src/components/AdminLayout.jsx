@@ -16,9 +16,12 @@ import {
 } from 'lucide-react';
 import logoImg from '../logo.png';
 import nailLogo from '../nail-logo.png';
+import CapacityMeter from './CapacityMeter';
+import TaskManagerModal from './TaskManagerModal';
 
 function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   const [time, setTime] = useState(new Date());
+  const [showTaskManagerModal, setShowTaskManagerModal] = useState(false);
 
   // Client Update States
   const [appVersion, setAppVersion] = useState(() => {
@@ -243,6 +246,9 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
               );
             })}
           </nav>
+
+          {/* Firebase Capacity Meter (Task Manager Style Traffic Monitor) */}
+          <CapacityMeter onOpenTaskManager={() => setShowTaskManagerModal(true)} />
         </div>
 
         {/* Sidebar Footer - HOD Account & Logout */}
@@ -412,6 +418,12 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
           </div>
         </div>
       )}
+
+      {/* Task Manager Performance Modal */}
+      <TaskManagerModal 
+        isOpen={showTaskManagerModal} 
+        onClose={() => setShowTaskManagerModal(false)} 
+      />
 
     </div>
   );

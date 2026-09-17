@@ -257,6 +257,10 @@ const triggerListeners = (collectionName, data) => {
 
 // ----------------------------------------------------
 // 3. Unified Abstraction Layer Exports
+import { trafficTracker } from './utils/trafficTracker';
+
+// ----------------------------------------------------
+// 3. Unified Abstraction Layer Exports
 // ----------------------------------------------------
 
 /**
@@ -264,16 +268,26 @@ const triggerListeners = (collectionName, data) => {
  * Works with Firestore onSnapshot when in Firebase mode, falls back to local storage pub/sub.
  */
 export const subscribeCollection = (collectionName, callback) => {
+  const streamId = `coll-${collectionName}-${Math.random().toString(36).substring(2, 7)}`;
+  trafficTracker.registerListener(streamId, collectionName);
+
   if (!isMockMode) {
     // Real Firestore setup
     const q = collection(db, collectionName);
-    return onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const readCount = Math.max(1, snapshot.docChanges().length || snapshot.docs.length || 1);
+      trafficTracker.recordRead(readCount, 300);
       callback(data);
     }, (error) => {
       console.error(`Firestore subscribe error for ${collectionName}:`, error);
       callback([]);
     });
+
+    return () => {
+      trafficTracker.unregisterListener(streamId);
+      unsub();
+    };
   } else {
     // Mock Mode
     if (!listeners[collectionName]) {
@@ -283,15 +297,17 @@ export const subscribeCollection = (collectionName, callback) => {
 
     // Initial trigger with current state
     const data = JSON.parse(localStorage.getItem(`vfx_${collectionName}`) || '[]');
-    // Adjust single configurations that are objects, not arrays
+    trafficTracker.recordRead(Array.isArray(data) ? Math.max(1, data.length) : 1, 200);
+
     if (collectionName.startsWith('settings_') && !Array.isArray(data)) {
-      callback([data]); // wrap in array to keep signature unified
+      callback([data]);
     } else {
       callback(data);
     }
 
     // Return unsubscribe function
     return () => {
+      trafficTracker.unregisterListener(streamId);
       listeners[collectionName] = listeners[collectionName].filter(cb => cb !== callback);
     };
   }
@@ -301,6 +317,7 @@ export const subscribeCollection = (collectionName, callback) => {
  * Fetches a single document from a collection (one-time read).
  */
 export const getDocument = async (collectionName, docId) => {
+  trafficTracker.recordRead(1, 400);
   if (!isMockMode) {
     const docRef = doc(db, collectionName, docId);
     const snap = await getDoc(docRef);
@@ -317,9 +334,13 @@ export const getDocument = async (collectionName, docId) => {
  * Subscribes to a single document updates (real-time).
  */
 export const subscribeDocument = (collectionName, docId, callback) => {
+  const streamId = `doc-${collectionName}-${docId}-${Math.random().toString(36).substring(2, 7)}`;
+  trafficTracker.registerListener(streamId, `${collectionName}/${docId}`);
+
   if (!isMockMode) {
     const docRef = doc(db, collectionName, docId);
-    return onSnapshot(docRef, (snapshot) => {
+    const unsub = onSnapshot(docRef, (snapshot) => {
+      trafficTracker.recordRead(1, 300);
       if (snapshot.exists()) {
         callback({ id: snapshot.id, ...snapshot.data() });
       } else {
@@ -329,6 +350,11 @@ export const subscribeDocument = (collectionName, docId, callback) => {
       console.error(`Firestore document subscribe error for ${collectionName}/${docId}:`, error);
       callback(null);
     });
+
+    return () => {
+      trafficTracker.unregisterListener(streamId);
+      unsub();
+    };
   } else {
     const listenerKey = `${collectionName}_${docId}`;
     if (!listeners[listenerKey]) {
@@ -341,9 +367,11 @@ export const subscribeDocument = (collectionName, docId, callback) => {
     const rawData = localStorage.getItem(storageKey);
     const items = JSON.parse(rawData || '[]');
     const docData = items.find(item => item.id === docId) || null;
+    trafficTracker.recordRead(1, 200);
     callback(docData);
 
     return () => {
+      trafficTracker.unregisterListener(streamId);
       listeners[listenerKey] = listeners[listenerKey].filter(cb => cb !== callback);
     };
   }
@@ -353,6 +381,7 @@ export const subscribeDocument = (collectionName, docId, callback) => {
  * Adds a new document to a collection.
  */
 export const addDocument = async (collectionName, data) => {
+  trafficTracker.recordWrite(1, 600);
   if (!isMockMode) {
     // Real Firestore
     const collRef = collection(db, collectionName);
@@ -380,6 +409,7 @@ export const addDocument = async (collectionName, data) => {
  * Updates an existing document in a collection.
  */
 export const updateDocument = async (collectionName, docId, data) => {
+  trafficTracker.recordWrite(1, 500);
   if (!isMockMode) {
     // Real Firestore
     const docRef = doc(db, collectionName, docId);
@@ -406,6 +436,7 @@ export const updateDocument = async (collectionName, docId, data) => {
  * Deletes a document from a collection.
  */
 export const deleteDocument = async (collectionName, docId) => {
+  trafficTracker.recordDelete(1);
   if (!isMockMode) {
     // Real Firestore
     const docRef = doc(db, collectionName, docId);
