@@ -198,6 +198,23 @@ function StudentClient({ onSessionStateChange }) {
   // Local Alerts & Timing States
   const [sessionEndTime, setSessionEndTime] = useState(null);
   const [localAlert, setLocalAlert] = useState(null);
+  const [syncIntervalMs, setSyncIntervalMs] = useState(30000); // Default Eco 30s
+  const [autoThrottle, setAutoThrottle] = useState(true);
+
+  useEffect(() => {
+    let unsubTraffic = null;
+    try {
+      unsubTraffic = subscribeDocument('system_settings', 'traffic_control', (data) => {
+        if (data) {
+          if (data.syncIntervalMs) setSyncIntervalMs(data.syncIntervalMs);
+          if (data.autoThrottle !== undefined) setAutoThrottle(data.autoThrottle);
+        }
+      });
+    } catch (e) {
+      console.error('Failed to subscribe traffic control:', e);
+    }
+    return () => unsubTraffic && unsubTraffic();
+  }, []);
   const [alertTriggered, setAlertTriggered] = useState({
     hour: false,
     mins30: false,
@@ -404,11 +421,19 @@ function StudentClient({ onSessionStateChange }) {
     };
   }, [activeSession, sessionEndTime, alertTriggered]);
 
-  // Heartbeat loop: update lastActive every 15 seconds while session is active
+  // Dynamic Heartbeat loop: updating lastActive dynamically based on HOD Traffic Normalizer mode
   useEffect(() => {
     let heartbeatInterval = null;
     if (activeSession && activeSession.computerId) {
       const startTimeToSync = activeSession.startTime || new Date().toISOString();
+      
+      // Calculate effective sync interval (Auto-throttle if active PCs >= 15)
+      const onlineCount = computers.filter(c => c.status === 'online').length;
+      let effectiveInterval = syncIntervalMs;
+      if (autoThrottle && onlineCount >= 15) {
+        effectiveInterval = Math.max(effectiveInterval, 30000); // Force Eco 30s+ under high lab load
+      }
+
       updateDocument('computers', activeSession.computerId, {
         lastActive: new Date().toISOString(),
         startTime: startTimeToSync
@@ -419,12 +444,12 @@ function StudentClient({ onSessionStateChange }) {
           lastActive: new Date().toISOString(),
           startTime: startTimeToSync
         }).catch(err => console.error('Heartbeat update failed:', err));
-      }, 10000);
+      }, effectiveInterval);
     }
     return () => {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
     };
-  }, [activeSession]);
+  }, [activeSession, syncIntervalMs, autoThrottle, computers]);
 
   // 4. Remote Logout Listener (HOD Override Reset)
   useEffect(() => {

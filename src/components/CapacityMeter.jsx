@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { trafficTracker } from '../utils/trafficTracker';
-import { Activity, Maximize2, AlertTriangle, ShieldCheck, Zap, Radio } from 'lucide-react';
+import { subscribeDocument, updateDocument } from '../firebase';
+import { Activity, Maximize2, AlertTriangle, ShieldCheck, Zap, Radio, Sliders, Shield, Gauge, Leaf } from 'lucide-react';
 
 function CapacityMeter({ onOpenTaskManager }) {
   const [stats, setStats] = useState(() => trafficTracker.getTrafficStats());
   const canvasRef = useRef(null);
+
+  const [trafficMode, setTrafficMode] = useState('eco');
+  const [syncIntervalMs, setSyncIntervalMs] = useState(30000);
+  const [autoThrottle, setAutoThrottle] = useState(true);
 
   useEffect(() => {
     const unsub = trafficTracker.subscribe((updatedStats) => {
@@ -12,6 +17,54 @@ function CapacityMeter({ onOpenTaskManager }) {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    let unsub = null;
+    try {
+      unsub = subscribeDocument('system_settings', 'traffic_control', (data) => {
+        if (data) {
+          if (data.mode) setTrafficMode(data.mode);
+          if (data.syncIntervalMs) setSyncIntervalMs(data.syncIntervalMs);
+          if (data.autoThrottle !== undefined) setAutoThrottle(data.autoThrottle);
+        }
+      });
+    } catch (e) {
+      console.error('Failed to subscribe to traffic_control:', e);
+    }
+    return () => unsub && unsub();
+  }, []);
+
+  const changeTrafficMode = async (newMode, newInterval) => {
+    setTrafficMode(newMode);
+    setSyncIntervalMs(newInterval);
+    try {
+      await updateDocument('system_settings', 'traffic_control', {
+        id: 'traffic_control',
+        mode: newMode,
+        syncIntervalMs: newInterval,
+        autoThrottle: autoThrottle,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Error updating traffic control:', err);
+    }
+  };
+
+  const toggleAutoThrottle = async () => {
+    const nextVal = !autoThrottle;
+    setAutoThrottle(nextVal);
+    try {
+      await updateDocument('system_settings', 'traffic_control', {
+        id: 'traffic_control',
+        mode: trafficMode,
+        syncIntervalMs: syncIntervalMs,
+        autoThrottle: nextVal,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Error updating autoThrottle:', err);
+    }
+  };
 
   // Render Task Manager Sparkline Graph on Canvas
   useEffect(() => {
@@ -287,6 +340,65 @@ function CapacityMeter({ onOpenTaskManager }) {
         <span>
           Est. Data: <strong className="text-slate-300">{formatBytes(stats.dailyBytes)}</strong>
         </span>
+      </div>
+
+      {/* HOD Traffic Normalizer & Sync Control */}
+      <div className="pt-2 border-t border-white/5 space-y-2">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="text-slate-400 font-extrabold uppercase tracking-wider flex items-center gap-1">
+            <Sliders className="h-3 w-3 text-studio-accent-purple" /> Dynamic Sync Control
+          </span>
+          <span className="text-[9px] font-mono text-emerald-400">
+            {trafficMode === 'eco' ? '🌿 -67% Traffic' : trafficMode === 'standard' ? '⚖️ Balanced' : '⚡ 5s Instant'}
+          </span>
+        </div>
+
+        {/* Sync Mode Selector Pills */}
+        <div className="grid grid-cols-3 gap-1 bg-studio-900 p-1 rounded-xl border border-white/5 text-[9px] font-bold">
+          <button
+            onClick={() => changeTrafficMode('eco', 30000)}
+            className={`py-1.5 rounded-lg transition flex items-center justify-center gap-1 ${
+              trafficMode === 'eco'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-studio-800'
+            }`}
+          >
+            <Leaf className="h-2.5 w-2.5" /> Eco (30s)
+          </button>
+          <button
+            onClick={() => changeTrafficMode('standard', 15000)}
+            className={`py-1.5 rounded-lg transition flex items-center justify-center gap-1 ${
+              trafficMode === 'standard'
+                ? 'bg-studio-accent-purple/20 text-studio-accent-purple border border-studio-accent-purple/40 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-studio-800'
+            }`}
+          >
+            <Gauge className="h-2.5 w-2.5" /> Std (15s)
+          </button>
+          <button
+            onClick={() => changeTrafficMode('exam', 5000)}
+            className={`py-1.5 rounded-lg transition flex items-center justify-center gap-1 ${
+              trafficMode === 'exam'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-studio-800'
+            }`}
+          >
+            <Zap className="h-2.5 w-2.5" /> Exam (5s)
+          </button>
+        </div>
+
+        {/* Auto Throttle Checkbox */}
+        <label className="flex items-center justify-between text-[9px] text-slate-400 cursor-pointer pt-0.5 group">
+          <span className="flex items-center gap-1 group-hover:text-slate-200 transition">
+            <Shield className="h-3 w-3 text-studio-accent-purple" /> Auto-Normalize high load
+          </span>
+          <input
+            type="checkbox"
+            checked={autoThrottle}
+            onChange={toggleAutoThrottle}
+            className="rounded bg-studio-900 border-white/10 text-studio-accent-purple focus:ring-0 h-3 w-3 cursor-pointer"
+          />
+        </label>
       </div>
 
       {/* High Usage Warning Banner if Caution/Warning */}
