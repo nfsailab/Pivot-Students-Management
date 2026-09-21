@@ -12,7 +12,12 @@ import {
   Clock,
   Layers,
   Sparkles,
-  X
+  X,
+  GripVertical,
+  Edit2,
+  ChevronUp,
+  ChevronDown,
+  Check
 } from 'lucide-react';
 
 // ----------------------------------------------------
@@ -271,35 +276,78 @@ const calculateSessionDuration = (timing) => {
   return 0;
 };
 
+const normalizeSessions = (sessions) => {
+  if (!sessions || !Array.isArray(sessions) || sessions.length === 0) return DEFAULT_SESSIONS;
+  return sessions.map((s, idx) => {
+    if (typeof s === 'string') {
+      return { name: `Session ${idx + 1}`, timing: s };
+    }
+    if (s && typeof s === 'object') {
+      return {
+        name: s.name || `Session ${idx + 1}`,
+        timing: s.timing || s.time || ''
+      };
+    }
+    return { name: `Session ${idx + 1}`, timing: '' };
+  });
+};
+
+const calculateCombinedSessionsDuration = (sessionNames, availableSessions) => {
+  if (!sessionNames) return 0;
+  const namesArr = Array.isArray(sessionNames) ? sessionNames : [sessionNames];
+  if (namesArr.length === 0) return 0;
+  let totalMins = 0;
+  const normAvailable = normalizeSessions(availableSessions);
+  for (const name of namesArr) {
+    if (!name) continue;
+    const sObj = normAvailable.find(s => s && s.name === name);
+    if (sObj && sObj.timing) {
+      totalMins += calculateSessionDuration(sObj.timing);
+    }
+  }
+  return totalMins;
+};
+
 // ----------------------------------------------------
 // Main Mode Settings Panel Component
 // ----------------------------------------------------
 function ModeSettingsTab() {
+  const [loading, setLoading] = useState(true);
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState('');
+  const [academicSettingsList, setAcademicSettingsList] = useState([]);
+  const [productionSettingsList, setProductionSettingsList] = useState([]);
+  const [research, setResearch] = useState(null);
+  const [genaiSettingsList, setGenaiSettingsList] = useState([]);
 
   const [showSessionsModal, setShowSessionsModal] = useState(false);
   const [modalSessions, setModalSessions] = useState([]);
 
-  const activeBatchObj = batches.find(b => b.batchName === selectedBatch);
+  const activeBatchObj = (batches || []).find(b => b && b.batchName === selectedBatch);
+  const commonBatchObj = (batches || []).find(b => b && b.sessionTimes && Array.isArray(b.sessionTimes) && b.sessionTimes.length > 0) || activeBatchObj;
+
+  const isSessionTimesOn = commonBatchObj?.useSessionTimes ?? true;
+  const rawSessions = (commonBatchObj?.sessionTimes && Array.isArray(commonBatchObj.sessionTimes) && commonBatchObj.sessionTimes.length > 0)
+    ? commonBatchObj.sessionTimes
+    : DEFAULT_SESSIONS;
+  const availableSessions = normalizeSessions(rawSessions);
 
   const handleToggleSessionTimes = async () => {
-    if (!activeBatchObj) return;
-    const newStatus = !activeBatchObj.useSessionTimes;
-    const updates = { useSessionTimes: newStatus };
-    if (newStatus && (!activeBatchObj.sessionTimes || activeBatchObj.sessionTimes.length === 0)) {
-      updates.sessionTimes = DEFAULT_SESSIONS;
-    }
+    if (batches.length === 0) return;
+    const newStatus = !isSessionTimesOn;
+    const updates = { 
+      useSessionTimes: newStatus,
+      sessionTimes: availableSessions
+    };
     try {
-      await updateDocument('batches', activeBatchObj.id, updates);
+      await Promise.all(batches.map(b => updateDocument('batches', b.id, updates)));
     } catch (err) {
-      console.error('Failed to toggle session times:', err);
+      console.error('Failed to toggle session times across all batches:', err);
     }
   };
 
   const handleOpenSessionsModal = () => {
-    if (!activeBatchObj) return;
-    setModalSessions(activeBatchObj.sessionTimes || DEFAULT_SESSIONS);
+    setModalSessions(availableSessions);
     setShowSessionsModal(true);
   };
 
@@ -323,46 +371,41 @@ function ModeSettingsTab() {
   };
 
   const handleSaveSessions = async () => {
-    if (!activeBatchObj) return;
+    if (batches.length === 0) return;
+    const updates = {
+      useSessionTimes: isSessionTimesOn,
+      sessionTimes: modalSessions
+    };
     try {
-      await updateDocument('batches', activeBatchObj.id, {
-        sessionTimes: modalSessions
-      });
+      await Promise.all(batches.map(b => updateDocument('batches', b.id, updates)));
       setShowSessionsModal(false);
     } catch (err) {
-      console.error('Failed to save session times:', err);
+      console.error('Failed to save session times across all batches:', err);
       alert('Failed to save sessions: ' + err.message);
     }
   };
 
-  const [academicSettingsList, setAcademicSettingsList] = useState([]);
-  const [productionSettingsList, setProductionSettingsList] = useState([]);
-  const [research, setResearch] = useState(null);
-  const [genaiSettingsList, setGenaiSettingsList] = useState([]);
-
-  const [loading, setLoading] = useState(true);
-
   // Academic inputs
   const [newTopic, setNewTopic] = useState('');
-  const [newTopicTiming, setNewTopicTiming] = useState('09:00 AM - 01:00 PM');
+  const [newTopicSessions, setNewTopicSessions] = useState(['Session 1']);
   const [newTopicCategory, setNewTopicCategory] = useState('SAX');
   const [academicInstructions, setAcademicInstructions] = useState('');
-  const [academicTimeslot, setAcademicTimeslot] = useState('09:00 AM - 01:00 PM');
+  const [academicTimeslot, setAcademicTimeslot] = useState('09:30 AM - 10:25 AM');
 
   // Production Project inputs
   const [projectName, setProjectName] = useState('');
-  const [projectTiming, setProjectTiming] = useState('02:00 PM - 06:00 PM');
+  const [projectSessions, setProjectSessions] = useState(['Session 1']);
   const [projectStage, setProjectStage] = useState('Production');
 
   // Research inputs
   const [newResearchTopic, setNewResearchTopic] = useState('');
-  const [newResearchTopicTiming, setNewResearchTopicTiming] = useState('09:00 AM - 01:00 PM');
+  const [newResearchTopicSessions, setNewResearchTopicSessions] = useState(['Session 1']);
   const [newResearchTopicCategory, setNewResearchTopicCategory] = useState('Observation Report');
   const [researchInstructions, setResearchInstructions] = useState('');
 
   // GenAI Lab inputs
   const [newGenaiProjectName, setNewGenaiProjectName] = useState('');
-  const [newGenaiProjectTiming, setNewGenaiProjectTiming] = useState('09:00 AM - 01:00 PM');
+  const [newGenaiProjectSessions, setNewGenaiProjectSessions] = useState(['Session 1']);
   const [newGenaiProjectStage, setNewGenaiProjectStage] = useState('GenAI Project');
   const [genaiInstructions, setGenaiInstructions] = useState('');
   const [productionInstructions, setProductionInstructions] = useState('');
@@ -372,6 +415,117 @@ function ModeSettingsTab() {
   const [localProductionProjects, setLocalProductionProjects] = useState([]);
   const [localResearchTopics, setLocalResearchTopics] = useState([]);
   const [localGenaiProjects, setLocalGenaiProjects] = useState([]);
+
+  // Dragging & Inline Editing State
+  const [dragInfo, setDragInfo] = useState({ mode: null, index: null });
+
+  const [editingAcadIndex, setEditingAcadIndex] = useState(null);
+  const [editAcadForm, setEditAcadForm] = useState({ name: '', sessionNames: ['Session 1'], taskType: 'SAX' });
+
+  const [editingProdIndex, setEditingProdIndex] = useState(null);
+  const [editProdForm, setEditProdForm] = useState({ name: '', sessionNames: ['Session 1'], taskType: 'Production' });
+
+  const [editingResearchIndex, setEditingResearchIndex] = useState(null);
+  const [editResearchForm, setEditResearchForm] = useState({ name: '', sessionNames: ['Session 1'], taskType: 'Observation Report' });
+
+  const [editingGenaiIndex, setEditingGenaiIndex] = useState(null);
+  const [editGenaiForm, setEditGenaiForm] = useState({ name: '', sessionNames: ['Session 1'], taskType: 'GenAI Project' });
+
+  // Reordering & Dragging Helpers
+  const moveListItem = (list, setList, index, direction) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= list.length) return;
+    const newList = [...list];
+    const [moved] = newList.splice(index, 1);
+    newList.splice(targetIndex, 0, moved);
+    setList(newList);
+  };
+
+  const handleDragStartItem = (mode, index) => {
+    setDragInfo({ mode, index });
+  };
+
+  const handleDragOverItem = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDropItem = (mode, dropIndex, list, setList) => {
+    if (dragInfo.mode !== mode || dragInfo.index === null || dragInfo.index === dropIndex) return;
+    const newList = [...list];
+    const [moved] = newList.splice(dragInfo.index, 1);
+    newList.splice(dropIndex, 0, moved);
+    setList(newList);
+    setDragInfo({ mode: null, index: null });
+  };
+
+  // Edit Submit Handlers
+  const handleSaveAcadEdit = (index) => {
+    if (!editAcadForm.name.trim()) return;
+    const selectedNames = editAcadForm.sessionNames.length > 0 ? editAcadForm.sessionNames : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
+    const updatedObj = {
+      name: editAcadForm.name.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
+      taskType: editAcadForm.taskType
+    };
+    const newList = [...localAcademicTopics];
+    newList[index] = updatedObj;
+    setLocalAcademicTopics(newList);
+    setEditingAcadIndex(null);
+  };
+
+  const handleSaveProdEdit = (index) => {
+    if (!editProdForm.name.trim()) return;
+    const selectedNames = editProdForm.sessionNames.length > 0 ? editProdForm.sessionNames : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
+    const updatedObj = {
+      name: editProdForm.name.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
+      taskType: editProdForm.taskType
+    };
+    const newList = [...localProductionProjects];
+    newList[index] = updatedObj;
+    setLocalProductionProjects(newList);
+    setEditingProdIndex(null);
+  };
+
+  const handleSaveResearchEdit = (index) => {
+    if (!editResearchForm.name.trim()) return;
+    const selectedNames = editResearchForm.sessionNames.length > 0 ? editResearchForm.sessionNames : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
+    const updatedObj = {
+      name: editResearchForm.name.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
+      taskType: editResearchForm.taskType
+    };
+    const newList = [...localResearchTopics];
+    newList[index] = updatedObj;
+    setLocalResearchTopics(newList);
+    setEditingResearchIndex(null);
+  };
+
+  const handleSaveGenaiEdit = (index) => {
+    if (!editGenaiForm.name.trim()) return;
+    const selectedNames = editGenaiForm.sessionNames.length > 0 ? editGenaiForm.sessionNames : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
+    const updatedObj = {
+      name: editGenaiForm.name.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
+      taskType: editGenaiForm.taskType
+    };
+    const newList = [...localGenaiProjects];
+    newList[index] = updatedObj;
+    setLocalGenaiProjects(newList);
+    setEditingGenaiIndex(null);
+  };
 
   // Saving state indicators
   const [savingAcademic, setSavingAcademic] = useState(false);
@@ -399,10 +553,10 @@ function ModeSettingsTab() {
     };
 
     const unsubBatches = subscribeCollection('batches', (data) => {
-      const sorted = [...data].sort((a, b) => a.batchName.localeCompare(b.batchName));
+      const sorted = [...(data || [])].sort((a, b) => ((a && a.batchName) || '').localeCompare((b && b.batchName) || ''));
       setBatches(sorted);
       if (sorted.length > 0 && !selectedBatch) {
-        setSelectedBatch(sorted[0].batchName);
+        setSelectedBatch(sorted[0]?.batchName || '');
       }
       loadedBatches = true;
       checkAllLoaded();
@@ -529,61 +683,57 @@ function ModeSettingsTab() {
     let totalSecs = 0;
     for (const t of topics) {
       if (!t || typeof t === 'string') continue;
-      if (t.allottedHours || t.hours || t.durationHours || t.allocatedHours || t.duration) {
-        const val = Number(t.allottedHours ?? t.hours ?? t.durationHours ?? t.allocatedHours ?? t.duration);
-        if (!isNaN(val) && val > 0) {
-          totalSecs += val * 3600;
+      if (t.sessionNames && Array.isArray(t.sessionNames) && t.sessionNames.length > 0) {
+        const durMins = calculateCombinedSessionsDuration(t.sessionNames, availableSessions);
+        if (durMins > 0) {
+          totalSecs += durMins * 60;
           continue;
         }
       }
       const timing = String(t.timing || '').trim();
-      if (!timing) continue;
-
-      const hrMatch = timing.match(/^(\d+(?:\.\d+)?)\s*(?:hr|hours?|h|mins?|m)?$/i);
-      if (hrMatch) {
-        let n = Number(hrMatch[1]);
-        if (/mins?|m/i.test(timing)) n = n / 60;
-        totalSecs += n * 3600;
-        continue;
+      if (timing) {
+        const durMins = calculateSessionDuration(timing);
+        if (durMins > 0) {
+          totalSecs += durMins * 60;
+          continue;
+        }
       }
-
-      const parts = timing.split(/\s*[-–to]+\s*/i);
-      if (parts.length === 2) {
-        const parseTime = (str) => {
-          const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
-          if (!m) return null;
-          let h = parseInt(m[1], 10);
-          const min = m[2] ? parseInt(m[2], 10) : 0;
-          const ampm = m[3] ? m[3].toUpperCase() : null;
-          if (ampm === 'PM' && h < 12) h += 12;
-          if (ampm === 'AM' && h === 12) h = 0;
-          return h * 3600 + min * 60;
-        };
-        const s = parseTime(parts[0]);
-        const e = parseTime(parts[1]);
-        if (s !== null && e !== null) {
-          let diff = e - s;
-          if (diff < 0) diff += 24 * 3600;
-          totalSecs += diff;
+      if (t.allottedHours || t.hours || t.durationHours || t.allocatedHours) {
+        const val = Number(t.allottedHours ?? t.hours ?? t.durationHours ?? t.allocatedHours);
+        if (!isNaN(val) && val > 0) {
+          totalSecs += val * 3600;
         }
       }
     }
     return Number((totalSecs / 3600).toFixed(2));
   };
 
+  const getTopicCombinedTiming = (selectedSessions, sessionList) => {
+    const names = Array.isArray(selectedSessions) ? selectedSessions : [selectedSessions];
+    const sObjs = names.map(n => (sessionList || []).find(s => s.name === n)).filter(Boolean);
+    if (sObjs.length === 0) return '09:30 AM - 10:25 AM';
+    const startTime = sObjs[0].timing ? sObjs[0].timing.split(' - ')[0] : '09:30 AM';
+    const endTime = sObjs[sObjs.length - 1].timing ? (sObjs[sObjs.length - 1].timing.split(' - ')[1] || sObjs[sObjs.length - 1].timing) : '10:25 AM';
+    return `${startTime} - ${endTime}`;
+  };
+
   const handleAddTopic = (e) => {
     e.preventDefault();
-    if (!newTopic.trim() || !newTopicTiming.trim() || !selectedBatch) return;
+    if (!newTopic.trim() || !selectedBatch) return;
     
+    const selectedNames = newTopicSessions.length > 0 ? newTopicSessions : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
     const newTopicObj = {
       name: newTopic.trim(),
-      timing: newTopicTiming.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
       taskType: newTopicCategory
     };
 
     setLocalAcademicTopics([...localAcademicTopics, newTopicObj]);
     setNewTopic('');
-    setNewTopicTiming('09:00 AM - 01:00 PM');
+    setNewTopicSessions([availableSessions[0]?.name || 'Session 1']);
     setNewTopicCategory('SAX');
   };
 
@@ -616,17 +766,21 @@ function ModeSettingsTab() {
   // ----------------------------------------------------
   const handleAddProject = (e) => {
     e.preventDefault();
-    if (!projectName.trim() || !projectTiming.trim() || !selectedBatch) return;
+    if (!projectName.trim() || !selectedBatch) return;
 
+    const selectedNames = projectSessions.length > 0 ? projectSessions : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
     const newProjectObj = {
       name: projectName.trim(),
-      timing: projectTiming.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
       taskType: projectStage
     };
 
     setLocalProductionProjects([...localProductionProjects, newProjectObj]);
     setProjectName('');
-    setProjectTiming('02:00 PM - 06:00 PM');
+    setProjectSessions([availableSessions[0]?.name || 'Session 1']);
     setProjectStage('Production');
   };
 
@@ -658,17 +812,21 @@ function ModeSettingsTab() {
   // ----------------------------------------------------
   const handleAddResearchTopic = (e) => {
     e.preventDefault();
-    if (!newResearchTopic.trim() || !newResearchTopicTiming.trim() || !research) return;
+    if (!newResearchTopic.trim() || !research) return;
 
+    const selectedNames = newResearchTopicSessions.length > 0 ? newResearchTopicSessions : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
     const newTopicObj = {
       name: newResearchTopic.trim(),
-      timing: newResearchTopicTiming.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
       taskType: newResearchTopicCategory
     };
 
     setLocalResearchTopics([...localResearchTopics, newTopicObj]);
     setNewResearchTopic('');
-    setNewResearchTopicTiming('09:00 AM - 01:00 PM');
+    setNewResearchTopicSessions([availableSessions[0]?.name || 'Session 1']);
     setNewResearchTopicCategory('Observation Report');
   };
 
@@ -700,17 +858,21 @@ function ModeSettingsTab() {
   // ----------------------------------------------------
   const handleAddGenaiProject = (e) => {
     e.preventDefault();
-    if (!newGenaiProjectName.trim() || !newGenaiProjectTiming.trim() || !selectedBatch) return;
+    if (!newGenaiProjectName.trim() || !selectedBatch) return;
 
+    const selectedNames = newGenaiProjectSessions.length > 0 ? newGenaiProjectSessions : [availableSessions[0]?.name || 'Session 1'];
+    const timing = getTopicCombinedTiming(selectedNames, availableSessions);
     const newProjectObj = {
       name: newGenaiProjectName.trim(),
-      timing: newGenaiProjectTiming.trim(),
+      sessionNames: selectedNames,
+      sessionName: selectedNames.join(', '),
+      timing: timing,
       taskType: newGenaiProjectStage
     };
 
     setLocalGenaiProjects([...localGenaiProjects, newProjectObj]);
     setNewGenaiProjectName('');
-    setNewGenaiProjectTiming('09:00 AM - 01:00 PM');
+    setNewGenaiProjectSessions([availableSessions[0]?.name || 'Session 1']);
     setNewGenaiProjectStage('GenAI Project');
   };
 
@@ -802,38 +964,36 @@ function ModeSettingsTab() {
           Set curriculum guidelines & project rosters per class batch
         </div>
         
-        {/* Toggle Session Times */}
-        {activeBatchObj && (
-          <div className="flex items-center gap-3 sm:ml-auto border-t sm:border-t-0 sm:border-l border-white/5 pt-3 sm:pt-0 sm:pl-4">
-            <span className="text-xs text-slate-450 font-bold">Session Times:</span>
+        {/* Toggle Session Times (Common across all batches) */}
+        <div className="flex items-center gap-3 sm:ml-auto border-t sm:border-t-0 sm:border-l border-white/5 pt-3 sm:pt-0 sm:pl-4">
+          <span className="text-xs text-slate-450 font-bold" title="Common to all class batches">Global Session Times:</span>
+          <button
+            type="button"
+            onClick={handleToggleSessionTimes}
+            className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${
+              isSessionTimesOn ? 'bg-studio-accent-purple' : 'bg-slate-700'
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                isSessionTimesOn ? 'translate-x-5.5' : 'translate-x-1'
+              }`}
+            />
+          </button>
+          <span className={`text-[10px] font-bold uppercase tracking-wider ${isSessionTimesOn ? 'text-studio-accent-purple' : 'text-slate-500'}`}>
+            {isSessionTimesOn ? 'ON' : 'OFF'}
+          </span>
+          {isSessionTimesOn && (
             <button
               type="button"
-              onClick={handleToggleSessionTimes}
-              className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${
-                activeBatchObj.useSessionTimes ? 'bg-studio-accent-purple' : 'bg-slate-700'
-              }`}
+              onClick={handleOpenSessionsModal}
+              className="px-2.5 py-1 rounded bg-studio-accent-purple/10 border border-studio-accent-purple/20 text-studio-accent-purple hover:bg-studio-accent-purple hover:text-white text-[10px] font-bold transition flex items-center gap-1 shrink-0 shadow-sm ml-1"
             >
-              <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                  activeBatchObj.useSessionTimes ? 'translate-x-5.5' : 'translate-x-1'
-                }`}
-              />
+              <Clock className="h-3 w-3" />
+              Edit Sessions
             </button>
-            <span className={`text-[10px] font-bold uppercase tracking-wider ${activeBatchObj.useSessionTimes ? 'text-studio-accent-purple' : 'text-slate-500'}`}>
-              {activeBatchObj.useSessionTimes ? 'ON' : 'OFF'}
-            </span>
-            {activeBatchObj.useSessionTimes && (
-              <button
-                type="button"
-                onClick={handleOpenSessionsModal}
-                className="px-2.5 py-1 rounded bg-studio-accent-purple/10 border border-studio-accent-purple/20 text-studio-accent-purple hover:bg-studio-accent-purple hover:text-white text-[10px] font-bold transition flex items-center gap-1 shrink-0 shadow-sm ml-1"
-              >
-                <Clock className="h-3 w-3" />
-                Edit Sessions
-              </button>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8 items-start">
@@ -875,11 +1035,46 @@ function ModeSettingsTab() {
                   />
                 </div>
 
-                <TimeRangeSlider
-                  label="Topic Timings"
-                  value={newTopicTiming}
-                  onChange={setNewTopicTiming}
-                />
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <span>Assign Sessions</span>
+                    {(() => {
+                      const totalMins = calculateCombinedSessionsDuration(newTopicSessions, availableSessions);
+                      return totalMins > 0 ? (
+                        <span className="text-studio-accent-blue font-mono font-bold text-[10px]">
+                          {totalMins} mins ({Number((totalMins / 60).toFixed(2))} hr)
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-start gap-1.5 p-2 bg-studio-900 border border-white/5 rounded-xl max-h-28 overflow-y-auto">
+                    {availableSessions.map((s, idx) => {
+                      const isSelected = (newTopicSessions || []).includes(s.name);
+                      return (
+                        <button
+                          type="button"
+                          key={idx}
+                          onClick={() => {
+                            if (isSelected) {
+                              if (newTopicSessions.length > 1) {
+                                setNewTopicSessions(newTopicSessions.filter(n => n !== s.name));
+                              }
+                            } else {
+                              setNewTopicSessions([...newTopicSessions, s.name]);
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all duration-150 inline-flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-studio-accent-blue text-white border-studio-accent-blue hover:bg-studio-accent-blue/80 shadow-sm'
+                              : 'bg-studio-950 text-slate-400 border-white/5 hover:bg-studio-800 hover:text-white hover:border-white/20'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Category</label>
@@ -923,33 +1118,175 @@ function ModeSettingsTab() {
                 ) : (
                   localAcademicTopics.map((topic, idx) => {
                     const name = typeof topic === 'string' ? topic : topic.name;
-                    const timing = typeof topic === 'string' ? academicTimeslot : (topic.timing || academicTimeslot);
-                    const category = typeof topic === 'string' ? 'Lecture' : (topic.taskType || 'Lecture');
+                    const category = typeof topic === 'string' ? 'SAX' : (topic.taskType || 'SAX');
+                    const sessionNamesArr = typeof topic === 'string'
+                      ? ['Session 1']
+                      : (topic.sessionNames || (topic.sessionName ? topic.sessionName.split(', ') : [(availableSessions.find(s => s.timing === topic.timing)?.name || 'Session 1')]));
+                    const sessionDisplayStr = sessionNamesArr.join(', ');
+                    const durMins = typeof topic === 'string'
+                      ? 55
+                      : (calculateCombinedSessionsDuration(sessionNamesArr, availableSessions) || calculateSessionDuration(topic.timing) || 55);
+
+                    const isEditing = editingAcadIndex === idx;
+
+                    if (isEditing) {
+                      return (
+                        <div key={idx} className="p-3 bg-studio-950 border border-studio-accent-blue/50 rounded-xl space-y-3">
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                            <span className="text-[10px] font-bold text-studio-accent-blue uppercase tracking-wider">Edit Topic</span>
+                            <button
+                              type="button"
+                              onClick={() => setEditingAcadIndex(null)}
+                              className="text-slate-500 hover:text-slate-300 p-0.5"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editAcadForm.name}
+                              onChange={(e) => setEditAcadForm({ ...editAcadForm, name: e.target.value })}
+                              className="w-full px-2.5 py-1 rounded-lg studio-input text-slate-100 text-xs font-semibold"
+                              placeholder="Topic Name"
+                            />
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={editAcadForm.taskType}
+                                onChange={(e) => setEditAcadForm({ ...editAcadForm, taskType: e.target.value })}
+                                className="px-2 py-1 rounded-lg studio-input text-slate-100 text-[10px] font-semibold select-dark w-1/3"
+                              >
+                                <option value="SAX">SAX</option>
+                                <option value="Assignments">Assignments</option>
+                                <option value="Events">Events</option>
+                              </select>
+                              <div className="flex-1 flex flex-wrap gap-1 items-center bg-studio-900 p-1.5 rounded-lg border border-white/5 max-h-20 overflow-y-auto">
+                                {availableSessions.map((s, sIdx) => {
+                                  const isSel = (editAcadForm?.sessionNames || []).includes(s.name);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={sIdx}
+                                      onClick={() => {
+                                        if (isSel) {
+                                          if (editAcadForm.sessionNames.length > 1) {
+                                            setEditAcadForm({ ...editAcadForm, sessionNames: editAcadForm.sessionNames.filter(n => n !== s.name) });
+                                          }
+                                        } else {
+                                          setEditAcadForm({ ...editAcadForm, sessionNames: [...editAcadForm.sessionNames, s.name] });
+                                        }
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-bold border transition ${
+                                        isSel ? 'bg-studio-accent-blue text-white border-studio-accent-blue' : 'bg-studio-950 text-slate-400 border-white/5 hover:text-white'
+                                      }`}
+                                    >
+                                      {s.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 pt-1.5 border-t border-white/5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingAcadIndex(null)}
+                              className="px-2.5 py-1 rounded bg-studio-900 text-slate-400 hover:text-white text-[10px] font-bold"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveAcadEdit(idx)}
+                              className="px-3 py-1 rounded bg-studio-accent-blue text-white hover:bg-studio-accent-blue/90 text-[10px] font-bold shadow-sm flex items-center gap-1"
+                            >
+                              <Check className="h-3 w-3" />
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div 
                         key={idx} 
-                        className="p-3 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-studio-accent-blue/20 transition hover-glow"
+                        draggable
+                        onDragStart={() => handleDragStartItem('academic', idx)}
+                        onDragOver={handleDragOverItem}
+                        onDrop={() => handleDropItem('academic', idx, localAcademicTopics, setLocalAcademicTopics)}
+                        className={`p-2.5 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-studio-accent-blue/20 transition ${
+                          dragInfo.mode === 'academic' && dragInfo.index === idx ? 'opacity-40 border-dashed border-studio-accent-blue' : ''
+                        }`}
                       >
-                        <div className="space-y-1.5 min-w-0 flex-1 pr-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-white truncate">{name}</span>
-                            <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(category)}`}>
-                              {category}
-                            </span>
+                        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                          <div className="flex items-center gap-0.5 shrink-0 text-slate-600 group-hover:text-slate-400">
+                            <div className="cursor-grab active:cursor-grabbing p-0.5 hover:text-white" title="Drag to reorder">
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="flex flex-col -space-y-1">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => moveListItem(localAcademicTopics, setLocalAcademicTopics, idx, -1)}
+                                className="p-0.5 hover:text-studio-accent-blue disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Up"
+                              >
+                                <ChevronUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === localAcademicTopics.length - 1}
+                                onClick={() => moveListItem(localAcademicTopics, setLocalAcademicTopics, idx, 1)}
+                                className="p-0.5 hover:text-studio-accent-blue disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Down"
+                              >
+                                <ChevronDown className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
-                            <Clock className="h-3 w-3 text-studio-accent-blue" />
-                            <span>{timing}</span>
+
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-white truncate">{name}</span>
+                              <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(category)}`}>
+                                {category}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium flex-wrap">
+                              <span className="px-2 py-0.5 rounded bg-studio-accent-blue/10 border border-studio-accent-blue/20 text-studio-accent-blue font-bold text-[9px] inline-flex items-center justify-center">
+                                {sessionDisplayStr}
+                              </span>
+                              <span className="text-[10px] font-mono font-semibold text-slate-400 inline-flex items-center justify-center">({durMins} mins)</span>
+                            </div>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteTopic(name)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition shrink-0"
-                          type="button"
-                          title="Delete Topic"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                          <button
+                            onClick={() => {
+                              setEditingAcadIndex(idx);
+                              setEditAcadForm({
+                                name: name,
+                                sessionNames: sessionNamesArr,
+                                taskType: category
+                              });
+                            }}
+                            className="p-1 text-slate-400 hover:text-studio-accent-blue hover:bg-studio-accent-blue/10 rounded transition"
+                            type="button"
+                            title="Edit Topic"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTopic(name)}
+                            className="p-1 text-slate-400 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition"
+                            type="button"
+                            title="Delete Topic"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })
@@ -1011,7 +1348,7 @@ function ModeSettingsTab() {
               </span>
             </div>
 
-            {/* c. Add Project Sub-form (clean labels and placeholders) */}
+            {/* Add Project Sub-form */}
             <div className="space-y-3 p-4 bg-studio-950/50 border border-white/5 rounded-2xl">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block border-b border-white/5 pb-1">
                 Add Project
@@ -1029,12 +1366,46 @@ function ModeSettingsTab() {
                   />
                 </div>
 
-                {/* b. Timing slider for production project */}
-                <TimeRangeSlider
-                  label="Shift Timings"
-                  value={projectTiming}
-                  onChange={setProjectTiming}
-                />
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <span>Assign Sessions</span>
+                    {(() => {
+                      const totalMins = calculateCombinedSessionsDuration(projectSessions, availableSessions);
+                      return totalMins > 0 ? (
+                        <span className="text-studio-accent-purple font-mono font-bold text-[10px]">
+                          {totalMins} mins ({Number((totalMins / 60).toFixed(2))} hr)
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-start gap-1.5 p-2 bg-studio-900 border border-white/5 rounded-xl max-h-28 overflow-y-auto">
+                    {availableSessions.map((s, idx) => {
+                      const isSelected = (projectSessions || []).includes(s.name);
+                      return (
+                        <button
+                          type="button"
+                          key={idx}
+                          onClick={() => {
+                            if (isSelected) {
+                              if (projectSessions.length > 1) {
+                                setProjectSessions(projectSessions.filter(n => n !== s.name));
+                              }
+                            } else {
+                              setProjectSessions([...projectSessions, s.name]);
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all duration-150 inline-flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-studio-accent-purple text-white border-studio-accent-purple hover:bg-studio-accent-purple/80 shadow-sm'
+                              : 'bg-studio-950 text-slate-400 border-white/5 hover:bg-studio-800 hover:text-white hover:border-white/20'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Pipeline Stage</label>
@@ -1076,33 +1447,174 @@ function ModeSettingsTab() {
                     No active projects for this batch.
                   </p>
                 ) : (
-                  localProductionProjects.map((project, idx) => (
-                    <div 
-                      key={idx} 
-                      className="p-3 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-studio-accent-purple/20 transition hover-glow"
-                    >
-                      <div className="space-y-1.5 min-w-0 flex-1 pr-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs text-white truncate">{project.name}</span>
-                          <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(project.taskType)}`}>
-                            {project.taskType}
-                          </span>
+                  localProductionProjects.map((project, idx) => {
+                    const sessionNamesArr = project.sessionNames || (project.sessionName ? project.sessionName.split(', ') : [(availableSessions.find(s => s.timing === project.timing)?.name || 'Session 1')]);
+                    const sessionDisplayStr = sessionNamesArr.join(', ');
+                    const durMins = calculateCombinedSessionsDuration(sessionNamesArr, availableSessions) || calculateSessionDuration(project.timing) || 55;
+
+                    const isEditing = editingProdIndex === idx;
+
+                    if (isEditing) {
+                      return (
+                        <div key={idx} className="p-3 bg-studio-950 border border-studio-accent-purple/50 rounded-xl space-y-3">
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                            <span className="text-[10px] font-bold text-studio-accent-purple uppercase tracking-wider">Edit Project</span>
+                            <button
+                              type="button"
+                              onClick={() => setEditingProdIndex(null)}
+                              className="text-slate-500 hover:text-slate-300 p-0.5"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editProdForm.name}
+                              onChange={(e) => setEditProdForm({ ...editProdForm, name: e.target.value })}
+                              className="w-full px-2.5 py-1 rounded-lg studio-input text-slate-100 text-xs font-semibold"
+                              placeholder="Project Name"
+                            />
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={editProdForm.taskType}
+                                onChange={(e) => setEditProdForm({ ...editProdForm, taskType: e.target.value })}
+                                className="px-2 py-1 rounded-lg studio-input text-slate-100 text-[10px] font-semibold select-dark w-1/3"
+                              >
+                                <option value="Pre Production">Pre Production</option>
+                                <option value="Production">Production</option>
+                                <option value="Post Production">Post Production</option>
+                              </select>
+                              <div className="flex-1 flex flex-wrap gap-1 items-center bg-studio-900 p-1.5 rounded-lg border border-white/5 max-h-20 overflow-y-auto">
+                                {availableSessions.map((s, sIdx) => {
+                                  const isSel = (editProdForm?.sessionNames || []).includes(s.name);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={sIdx}
+                                      onClick={() => {
+                                        if (isSel) {
+                                          if (editProdForm.sessionNames.length > 1) {
+                                            setEditProdForm({ ...editProdForm, sessionNames: editProdForm.sessionNames.filter(n => n !== s.name) });
+                                          }
+                                        } else {
+                                          setEditProdForm({ ...editProdForm, sessionNames: [...editProdForm.sessionNames, s.name] });
+                                        }
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-bold border transition ${
+                                        isSel ? 'bg-studio-accent-purple text-white border-studio-accent-purple' : 'bg-studio-950 text-slate-400 border-white/5 hover:text-white'
+                                      }`}
+                                    >
+                                      {s.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 pt-1.5 border-t border-white/5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingProdIndex(null)}
+                              className="px-2.5 py-1 rounded bg-studio-900 text-slate-400 hover:text-white text-[10px] font-bold"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveProdEdit(idx)}
+                              className="px-3 py-1 rounded bg-studio-accent-purple text-white hover:bg-studio-accent-purple/90 text-[10px] font-bold shadow-sm flex items-center gap-1"
+                            >
+                              <Check className="h-3 w-3" />
+                              Save
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
-                          <Clock className="h-3 w-3 text-studio-accent-purple" />
-                          <span>{project.timing}</span>
+                      );
+                    }
+
+                    return (
+                      <div 
+                        key={idx} 
+                        draggable
+                        onDragStart={() => handleDragStartItem('production', idx)}
+                        onDragOver={handleDragOverItem}
+                        onDrop={() => handleDropItem('production', idx, localProductionProjects, setLocalProductionProjects)}
+                        className={`p-2.5 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-studio-accent-purple/20 transition ${
+                          dragInfo.mode === 'production' && dragInfo.index === idx ? 'opacity-40 border-dashed border-studio-accent-purple' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                          <div className="flex items-center gap-0.5 shrink-0 text-slate-600 group-hover:text-slate-400">
+                            <div className="cursor-grab active:cursor-grabbing p-0.5 hover:text-white" title="Drag to reorder">
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="flex flex-col -space-y-1">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => moveListItem(localProductionProjects, setLocalProductionProjects, idx, -1)}
+                                className="p-0.5 hover:text-studio-accent-purple disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Up"
+                              >
+                                <ChevronUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === localProductionProjects.length - 1}
+                                onClick={() => moveListItem(localProductionProjects, setLocalProductionProjects, idx, 1)}
+                                className="p-0.5 hover:text-studio-accent-purple disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Down"
+                              >
+                                <ChevronDown className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-white truncate">{project.name}</span>
+                              <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(project.taskType)}`}>
+                                {project.taskType}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium flex-wrap">
+                              <span className="px-2 py-0.5 rounded bg-studio-accent-purple/10 border border-studio-accent-purple/20 text-studio-accent-purple font-bold text-[9px] inline-flex items-center justify-center">
+                                {sessionDisplayStr}
+                              </span>
+                              <span className="text-[10px] font-mono font-semibold text-slate-400 inline-flex items-center justify-center">({durMins} mins)</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                          <button
+                            onClick={() => {
+                              setEditingProdIndex(idx);
+                              setEditProdForm({
+                                name: project.name,
+                                sessionNames: sessionNamesArr,
+                                taskType: project.taskType || 'Production'
+                              });
+                            }}
+                            className="p-1 text-slate-400 hover:text-studio-accent-purple hover:bg-studio-accent-purple/10 rounded transition"
+                            type="button"
+                            title="Edit Project"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteProject(project.name)}
+                            className="p-1 text-slate-400 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition"
+                            type="button"
+                            title="Delete Project"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleDeleteProject(project.name)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition shrink-0"
-                        type="button"
-                        title="Delete Project"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1177,11 +1689,46 @@ function ModeSettingsTab() {
                   />
                 </div>
 
-                <TimeRangeSlider
-                  label="Topic Timings"
-                  value={newResearchTopicTiming}
-                  onChange={setNewResearchTopicTiming}
-                />
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <span>Assign Sessions</span>
+                    {(() => {
+                      const totalMins = calculateCombinedSessionsDuration(newResearchTopicSessions, availableSessions);
+                      return totalMins > 0 ? (
+                        <span className="text-studio-accent-green font-mono font-bold text-[10px]">
+                          {totalMins} mins ({Number((totalMins / 60).toFixed(2))} hr)
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-start gap-1.5 p-2 bg-studio-900 border border-white/5 rounded-xl max-h-28 overflow-y-auto">
+                    {availableSessions.map((s, idx) => {
+                      const isSelected = (newResearchTopicSessions || []).includes(s.name);
+                      return (
+                        <button
+                          type="button"
+                          key={idx}
+                          onClick={() => {
+                            if (isSelected) {
+                              if (newResearchTopicSessions.length > 1) {
+                                setNewResearchTopicSessions(newResearchTopicSessions.filter(n => n !== s.name));
+                              }
+                            } else {
+                              setNewResearchTopicSessions([...newResearchTopicSessions, s.name]);
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all duration-150 inline-flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-studio-accent-green text-white border-studio-accent-green hover:bg-studio-accent-green/80 shadow-sm'
+                              : 'bg-studio-950 text-slate-400 border-white/5 hover:bg-studio-800 hover:text-white hover:border-white/20'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Category</label>
@@ -1225,33 +1772,175 @@ function ModeSettingsTab() {
                 ) : (
                   localResearchTopics.map((topic, idx) => {
                     const name = typeof topic === 'string' ? topic : topic.name;
-                    const timing = typeof topic === 'string' ? '09:00 AM - 01:00 PM' : (topic.timing || '09:00 AM - 01:00 PM');
                     const category = typeof topic === 'string' ? 'Observation Report' : (topic.taskType || 'Observation Report');
+                    const sessionNamesArr = typeof topic === 'string'
+                      ? ['Session 1']
+                      : (topic.sessionNames || (topic.sessionName ? topic.sessionName.split(', ') : [(availableSessions.find(s => s.timing === topic.timing)?.name || 'Session 1')]));
+                    const sessionDisplayStr = sessionNamesArr.join(', ');
+                    const durMins = typeof topic === 'string'
+                      ? 55
+                      : (calculateCombinedSessionsDuration(sessionNamesArr, availableSessions) || calculateSessionDuration(topic.timing) || 55);
+
+                    const isEditing = editingResearchIndex === idx;
+
+                    if (isEditing) {
+                      return (
+                        <div key={idx} className="p-3 bg-studio-950 border border-emerald-500/50 rounded-xl space-y-3">
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Edit Research Topic</span>
+                            <button
+                              type="button"
+                              onClick={() => setEditingResearchIndex(null)}
+                              className="text-slate-500 hover:text-slate-300 p-0.5"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editResearchForm.name}
+                              onChange={(e) => setEditResearchForm({ ...editResearchForm, name: e.target.value })}
+                              className="w-full px-2.5 py-1 rounded-lg studio-input text-slate-100 text-xs font-semibold"
+                              placeholder="Topic Name"
+                            />
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={editResearchForm.taskType}
+                                onChange={(e) => setEditResearchForm({ ...editResearchForm, taskType: e.target.value })}
+                                className="px-2 py-1 rounded-lg studio-input text-slate-100 text-[10px] font-semibold select-dark w-1/3"
+                              >
+                                <option value="Observation Report">Observation Report</option>
+                                <option value="Analysis Report">Analysis Report</option>
+                                <option value="Review">Review</option>
+                              </select>
+                              <div className="flex-1 flex flex-wrap gap-1 items-center bg-studio-900 p-1.5 rounded-lg border border-white/5 max-h-20 overflow-y-auto">
+                                {availableSessions.map((s, sIdx) => {
+                                  const isSel = (editResearchForm?.sessionNames || []).includes(s.name);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={sIdx}
+                                      onClick={() => {
+                                        if (isSel) {
+                                          if (editResearchForm.sessionNames.length > 1) {
+                                            setEditResearchForm({ ...editResearchForm, sessionNames: editResearchForm.sessionNames.filter(n => n !== s.name) });
+                                          }
+                                        } else {
+                                          setEditResearchForm({ ...editResearchForm, sessionNames: [...editResearchForm.sessionNames, s.name] });
+                                        }
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-bold border transition ${
+                                        isSel ? 'bg-emerald-500 text-black font-extrabold border-emerald-500' : 'bg-studio-950 text-slate-400 border-white/5 hover:text-white'
+                                      }`}
+                                    >
+                                      {s.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 pt-1.5 border-t border-white/5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingResearchIndex(null)}
+                              className="px-2.5 py-1 rounded bg-studio-900 text-slate-400 hover:text-white text-[10px] font-bold"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveResearchEdit(idx)}
+                              className="px-3 py-1 rounded bg-emerald-500 text-black hover:bg-emerald-400 text-[10px] font-extrabold shadow-sm flex items-center gap-1"
+                            >
+                              <Check className="h-3 w-3" />
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div 
                         key={idx} 
-                        className="p-3 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-emerald-500/20 transition hover-glow"
+                        draggable
+                        onDragStart={() => handleDragStartItem('research', idx)}
+                        onDragOver={handleDragOverItem}
+                        onDrop={() => handleDropItem('research', idx, localResearchTopics, setLocalResearchTopics)}
+                        className={`p-2.5 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-emerald-500/20 transition ${
+                          dragInfo.mode === 'research' && dragInfo.index === idx ? 'opacity-40 border-dashed border-emerald-500' : ''
+                        }`}
                       >
-                        <div className="space-y-1.5 min-w-0 flex-1 pr-2">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-white truncate">{name}</span>
-                            <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(category)}`}>
-                              {category}
-                            </span>
+                        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                          <div className="flex items-center gap-0.5 shrink-0 text-slate-600 group-hover:text-slate-400">
+                            <div className="cursor-grab active:cursor-grabbing p-0.5 hover:text-white" title="Drag to reorder">
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="flex flex-col -space-y-1">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => moveListItem(localResearchTopics, setLocalResearchTopics, idx, -1)}
+                                className="p-0.5 hover:text-emerald-400 disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Up"
+                              >
+                                <ChevronUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === localResearchTopics.length - 1}
+                                onClick={() => moveListItem(localResearchTopics, setLocalResearchTopics, idx, 1)}
+                                className="p-0.5 hover:text-emerald-400 disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Down"
+                              >
+                                <ChevronDown className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
-                            <Clock className="h-3 w-3 text-studio-accent-green" />
-                            <span>{timing}</span>
+
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-white truncate">{name}</span>
+                              <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(category)}`}>
+                                {category}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium flex-wrap">
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[9px] inline-flex items-center justify-center">
+                                {sessionDisplayStr}
+                              </span>
+                              <span className="text-[10px] font-mono font-semibold text-slate-400 inline-flex items-center justify-center">({durMins} mins)</span>
+                            </div>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteResearchTopic(name)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition shrink-0"
-                          type="button"
-                          title="Delete Topic"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                          <button
+                            onClick={() => {
+                              setEditingResearchIndex(idx);
+                              setEditResearchForm({
+                                name: name,
+                                sessionNames: sessionNamesArr,
+                                taskType: category
+                              });
+                            }}
+                            className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded transition"
+                            type="button"
+                            title="Edit Topic"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteResearchTopic(name)}
+                            className="p-1 text-slate-400 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition"
+                            type="button"
+                            title="Delete Topic"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })
@@ -1329,11 +2018,46 @@ function ModeSettingsTab() {
                   />
                 </div>
 
-                <TimeRangeSlider
-                  label="Shift Timings"
-                  value={newGenaiProjectTiming}
-                  onChange={setNewGenaiProjectTiming}
-                />
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                    <span>Assign Sessions</span>
+                    {(() => {
+                      const totalMins = calculateCombinedSessionsDuration(newGenaiProjectSessions, availableSessions);
+                      return totalMins > 0 ? (
+                        <span className="text-amber-400 font-mono font-bold text-[10px]">
+                          {totalMins} mins ({Number((totalMins / 60).toFixed(2))} hr)
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-start gap-1.5 p-2 bg-studio-900 border border-white/5 rounded-xl max-h-28 overflow-y-auto">
+                    {availableSessions.map((s, idx) => {
+                      const isSelected = (newGenaiProjectSessions || []).includes(s.name);
+                      return (
+                        <button
+                          type="button"
+                          key={idx}
+                          onClick={() => {
+                            if (isSelected) {
+                              if (newGenaiProjectSessions.length > 1) {
+                                setNewGenaiProjectSessions(newGenaiProjectSessions.filter(n => n !== s.name));
+                              }
+                            } else {
+                              setNewGenaiProjectSessions([...newGenaiProjectSessions, s.name]);
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all duration-150 inline-flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'bg-amber-600 text-white border-amber-600 hover:bg-amber-500 shadow-sm'
+                              : 'bg-studio-950 text-slate-400 border-white/5 hover:bg-studio-800 hover:text-white hover:border-white/20'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Pipeline Stage</label>
@@ -1373,33 +2097,172 @@ function ModeSettingsTab() {
                     No active GenAI projects for this batch.
                   </p>
                 ) : (
-                  localGenaiProjects.map((project, idx) => (
-                    <div 
-                      key={idx} 
-                      className="p-3 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-amber-500/20 transition hover-glow"
-                    >
-                      <div className="space-y-1.5 min-w-0 flex-1 pr-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs text-white truncate">{project.name}</span>
-                          <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(project.taskType)}`}>
-                            {project.taskType}
-                          </span>
+                  localGenaiProjects.map((project, idx) => {
+                    const sessionNamesArr = project.sessionNames || (project.sessionName ? project.sessionName.split(', ') : [(availableSessions.find(s => s.timing === project.timing)?.name || 'Session 1')]);
+                    const sessionDisplayStr = sessionNamesArr.join(', ');
+                    const durMins = calculateCombinedSessionsDuration(sessionNamesArr, availableSessions) || calculateSessionDuration(project.timing) || 55;
+
+                    const isEditing = editingGenaiIndex === idx;
+
+                    if (isEditing) {
+                      return (
+                        <div key={idx} className="p-3 bg-studio-950 border border-amber-500/50 rounded-xl space-y-3">
+                          <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                            <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Edit GenAI Project</span>
+                            <button
+                              type="button"
+                              onClick={() => setEditingGenaiIndex(null)}
+                              className="text-slate-500 hover:text-slate-300 p-0.5"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editGenaiForm.name}
+                              onChange={(e) => setEditGenaiForm({ ...editGenaiForm, name: e.target.value })}
+                              className="w-full px-2.5 py-1 rounded-lg studio-input text-slate-100 text-xs font-semibold"
+                              placeholder="Project Name"
+                            />
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={editGenaiForm.taskType}
+                                onChange={(e) => setEditGenaiForm({ ...editGenaiForm, taskType: e.target.value })}
+                                className="px-2 py-1 rounded-lg studio-input text-slate-100 text-[10px] font-semibold select-dark w-1/3"
+                              >
+                                <option value="GenAI Project">GenAI Project</option>
+                              </select>
+                              <div className="flex-1 flex flex-wrap gap-1 items-center bg-studio-900 p-1.5 rounded-lg border border-white/5 max-h-20 overflow-y-auto">
+                                {availableSessions.map((s, sIdx) => {
+                                  const isSel = (editGenaiForm?.sessionNames || []).includes(s.name);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={sIdx}
+                                      onClick={() => {
+                                        if (isSel) {
+                                          if (editGenaiForm.sessionNames.length > 1) {
+                                            setEditGenaiForm({ ...editGenaiForm, sessionNames: editGenaiForm.sessionNames.filter(n => n !== s.name) });
+                                          }
+                                        } else {
+                                          setEditGenaiForm({ ...editGenaiForm, sessionNames: [...editGenaiForm.sessionNames, s.name] });
+                                        }
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-bold border transition ${
+                                        isSel ? 'bg-amber-600 text-white border-amber-600' : 'bg-studio-950 text-slate-400 border-white/5 hover:text-white'
+                                      }`}
+                                    >
+                                      {s.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 pt-1.5 border-t border-white/5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingGenaiIndex(null)}
+                              className="px-2.5 py-1 rounded bg-studio-900 text-slate-400 hover:text-white text-[10px] font-bold"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveGenaiEdit(idx)}
+                              className="px-3 py-1 rounded bg-amber-600 text-white hover:bg-amber-500 text-[10px] font-bold shadow-sm flex items-center gap-1"
+                            >
+                              <Check className="h-3 w-3" />
+                              Save
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
-                          <Clock className="h-3 w-3 text-amber-500" />
-                          <span>{project.timing}</span>
+                      );
+                    }
+
+                    return (
+                      <div 
+                        key={idx} 
+                        draggable
+                        onDragStart={() => handleDragStartItem('genai', idx)}
+                        onDragOver={handleDragOverItem}
+                        onDrop={() => handleDropItem('genai', idx, localGenaiProjects, setLocalGenaiProjects)}
+                        className={`p-2.5 bg-studio-900 border border-white/5 rounded-xl flex items-center justify-between group hover:border-amber-500/20 transition ${
+                          dragInfo.mode === 'genai' && dragInfo.index === idx ? 'opacity-40 border-dashed border-amber-500' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                          <div className="flex items-center gap-0.5 shrink-0 text-slate-600 group-hover:text-slate-400">
+                            <div className="cursor-grab active:cursor-grabbing p-0.5 hover:text-white" title="Drag to reorder">
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="flex flex-col -space-y-1">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => moveListItem(localGenaiProjects, setLocalGenaiProjects, idx, -1)}
+                                className="p-0.5 hover:text-amber-400 disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Up"
+                              >
+                                <ChevronUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === localGenaiProjects.length - 1}
+                                onClick={() => moveListItem(localGenaiProjects, setLocalGenaiProjects, idx, 1)}
+                                className="p-0.5 hover:text-amber-400 disabled:opacity-20 disabled:hover:text-slate-600 transition"
+                                title="Move Down"
+                              >
+                                <ChevronDown className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-white truncate">{project.name}</span>
+                              <span className={`px-2 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wide leading-none shrink-0 ${getStageBadgeColor(project.taskType)}`}>
+                                {project.taskType}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium flex-wrap">
+                              <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold text-[9px] inline-flex items-center justify-center">
+                                {sessionDisplayStr}
+                              </span>
+                              <span className="text-[10px] font-mono font-semibold text-slate-400 inline-flex items-center justify-center">({durMins} mins)</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                          <button
+                            onClick={() => {
+                              setEditingGenaiIndex(idx);
+                              setEditGenaiForm({
+                                name: project.name,
+                                sessionNames: sessionNamesArr,
+                                taskType: project.taskType || 'GenAI Project'
+                              });
+                            }}
+                            className="p-1 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded transition"
+                            type="button"
+                            title="Edit Project"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteGenaiProject(project.name)}
+                            className="p-1 text-slate-400 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition"
+                            type="button"
+                            title="Delete Project"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleDeleteGenaiProject(project.name)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded transition shrink-0"
-                        type="button"
-                        title="Delete Project"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1452,7 +2315,7 @@ function ModeSettingsTab() {
                 </div>
                 <div>
                   <h3 className="font-extrabold text-white text-base">Edit Session Times</h3>
-                  <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Configure sessions for batch: {selectedBatch}</p>
+                  <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Configure common global session times for all class batches</p>
                 </div>
               </div>
               <button 

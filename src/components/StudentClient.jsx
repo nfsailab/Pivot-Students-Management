@@ -45,10 +45,11 @@ function StudentClient({ onSessionStateChange }) {
   const [resConfig, setResConfig] = useState(null);
   const [genaiConfigsList, setGenaiConfigsList] = useState([]);
   const [logsList, setLogsList] = useState([]);
+  const [workstationsList, setWorkstationsList] = useState([]);
 
   // Workstation Identifier
   const defaultPc = import.meta.env.VITE_PC_ID || '';
-  const [selectedPC, setSelectedPC] = useState(defaultPc || 'PC-01');
+  const [selectedPC, setSelectedPC] = useState(defaultPc || 'VFX-01');
 
   // Form Inputs
   const [selectedBatch, setSelectedBatch] = useState('');
@@ -249,9 +250,16 @@ function StudentClient({ onSessionStateChange }) {
       setGenaiConfigsList(data);
     });
 
+    const unsubWorkstations = subscribeCollection('computers', (data) => {
+      const list = (data || []).map(w => ({ ...w, name: w.name || w.id }));
+      const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+      setWorkstationsList(sorted);
+    });
+
     return () => {
       unsubBatches();
       unsubStudents();
+      unsubWorkstations();
       unsubModes();
       unsubAcad();
       unsubProd();
@@ -1036,7 +1044,7 @@ function StudentClient({ onSessionStateChange }) {
                   ) : (
                     (activeAcad.topics || []).map((t, i) => {
                       const name = typeof t === 'string' ? t : (t.name || 'Unnamed Topic');
-                      const timing = typeof t === 'string' ? '' : (t.timing || '');
+                      const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === t.timing)?.name || 'Session 1');
                       const category = typeof t === 'string' ? '' : (t.taskType || '');
                       const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
                       return (
@@ -1060,10 +1068,10 @@ function StudentClient({ onSessionStateChange }) {
                               {isSelected ? '✓ Selected' : 'Select'}
                             </span>
                           </div>
-                          {(timing || category) && (
-                            <div className="flex gap-2 text-[9px] text-slate-400 font-mono mt-0.5">
-                              {category && <span className="text-studio-accent-blue font-bold uppercase">{category}</span>}
-                              {timing && <span>⏱ {timing}</span>}
+                          {(sessionName || category) && (
+                            <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono mt-0.5 flex-wrap">
+                              {category && <span className="text-studio-accent-blue font-bold uppercase inline-flex items-center justify-center">{category}</span>}
+                              <span className="px-1.5 py-0.5 rounded bg-studio-accent-blue/10 border border-studio-accent-blue/20 text-studio-accent-blue font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
                             </div>
                           )}
                         </button>
@@ -1090,7 +1098,7 @@ function StudentClient({ onSessionStateChange }) {
                   ) : (
                     (activeProd.projects || []).map((proj, i) => {
                       const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                      const timing = typeof proj === 'string' ? '' : (proj.timing || '');
+                      const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === proj.timing)?.name || 'Session 1');
                       const category = typeof proj === 'string' ? '' : (proj.taskType || 'Production');
                       const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
                       return (
@@ -1109,7 +1117,7 @@ function StudentClient({ onSessionStateChange }) {
                           <div className="flex justify-between items-center w-full">
                             <span className="font-bold text-[11px]">{name}</span>
                             <div className="flex items-center gap-1.5">
-                              {category && <span className="px-1.5 py-0.5 rounded bg-studio-accent-purple/15 border border-studio-accent-purple/20 text-studio-accent-purple font-semibold text-[8px] uppercase tracking-wide leading-none">{category}</span>}
+                              {category && <span className="px-1.5 py-0.5 rounded bg-studio-accent-purple/15 border border-studio-accent-purple/20 text-studio-accent-purple font-semibold text-[8px] uppercase tracking-wide leading-none shrink-0">{category}</span>}
                               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
                                 isSelected ? 'bg-studio-accent-purple text-white' : 'bg-white/10 text-slate-400'
                               }`}>
@@ -1117,12 +1125,9 @@ function StudentClient({ onSessionStateChange }) {
                               </span>
                             </div>
                           </div>
-                          {timing && (
-                            <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-medium">
-                              <Clock className="h-3 w-3 text-studio-accent-purple" />
-                              <span>Shift Timing: {timing}</span>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-medium flex-wrap">
+                            <span className="px-1.5 py-0.5 rounded bg-studio-accent-purple/10 border border-studio-accent-purple/20 text-studio-accent-purple font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
+                          </div>
                         </button>
                       );
                     })
@@ -1147,7 +1152,7 @@ function StudentClient({ onSessionStateChange }) {
                   ) : (
                     (resConfig.assignmentTopics || []).map((t, i) => {
                       const name = typeof t === 'string' ? t : (t.name || 'Unnamed Topic');
-                      const timing = typeof t === 'string' ? '' : (t.timing || '');
+                      const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === t.timing)?.name || 'Session 1');
                       const category = typeof t === 'string' ? '' : (t.taskType || '');
                       const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
                       return (
@@ -1171,10 +1176,10 @@ function StudentClient({ onSessionStateChange }) {
                               {isSelected ? '✓ Selected' : 'Select'}
                             </span>
                           </div>
-                          {(timing || category) && (
-                            <div className="flex gap-2 text-[9px] text-slate-400 font-mono mt-0.5">
-                              {category && <span className="text-emerald-400 font-bold uppercase">{category}</span>}
-                              {timing && <span>⏱ {timing}</span>}
+                          {(sessionName || category) && (
+                            <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono mt-0.5 flex-wrap">
+                              {category && <span className="text-emerald-400 font-bold uppercase inline-flex items-center justify-center">{category}</span>}
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
                             </div>
                           )}
                         </button>
@@ -1201,7 +1206,7 @@ function StudentClient({ onSessionStateChange }) {
                   ) : (
                     (activeGenai.projects || []).map((proj, i) => {
                       const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                      const timing = typeof proj === 'string' ? '' : (proj.timing || '');
+                      const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === proj.timing)?.name || 'Session 1');
                       const category = typeof proj === 'string' ? '' : (proj.taskType || 'GenAI');
                       const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
                       return (
@@ -1220,7 +1225,7 @@ function StudentClient({ onSessionStateChange }) {
                           <div className="flex justify-between items-center w-full">
                             <span className="font-bold text-[11px]">{name}</span>
                             <div className="flex items-center gap-1.5">
-                              {category && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/20 text-amber-400 font-semibold text-[8px] uppercase tracking-wide leading-none">{category}</span>}
+                              {category && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/20 text-amber-400 font-semibold text-[8px] uppercase tracking-wide leading-none shrink-0">{category}</span>}
                               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
                                 isSelected ? 'bg-amber-500 text-black font-extrabold' : 'bg-white/10 text-slate-400'
                               }`}>
@@ -1228,12 +1233,9 @@ function StudentClient({ onSessionStateChange }) {
                               </span>
                             </div>
                           </div>
-                          {timing && (
-                            <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-medium">
-                              <Clock className="h-3 w-3 text-amber-500" />
-                              <span>Shift Timing: {timing}</span>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-medium flex-wrap">
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
+                          </div>
                         </button>
                       );
                     })
@@ -1449,17 +1451,15 @@ function StudentClient({ onSessionStateChange }) {
                       <div className="space-y-1.5 mt-1.5">
                         {(activeAcad.topics || []).map((t, i) => {
                           const name = typeof t === 'string' ? t : t.name;
-                          const timing = typeof t === 'string' ? '' : t.timing;
+                          const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || 'Session 1');
                           const category = typeof t === 'string' ? '' : t.taskType;
                           return (
                             <div key={i} className="p-2 bg-studio-950/60 border border-white/5 rounded-lg flex flex-col gap-1">
                               <span className="font-bold text-white text-[10px]">{name}</span>
-                              {(timing || category) && (
-                                <div className="flex gap-2 text-[8px] text-slate-500 font-mono">
-                                  {category && <span className="text-studio-accent-blue font-bold uppercase">{category}</span>}
-                                  {timing && <span>{timing}</span>}
-                                </div>
-                              )}
+                              <div className="flex gap-2 text-[8px] text-slate-500 font-mono">
+                                {category && <span className="text-studio-accent-blue font-bold uppercase">{category}</span>}
+                                <span className="text-studio-accent-blue font-bold">{sessionName}</span>
+                              </div>
                             </div>
                           );
                         })}
@@ -1472,14 +1472,15 @@ function StudentClient({ onSessionStateChange }) {
                       <p className="mt-1">{activeProd.instructions || 'Execute assigned production shots and tasks.'}</p>
                       {(activeProd.projects || []).map((proj, idx) => {
                         const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                        const timing = typeof proj === 'string' ? '' : (proj.timing || '');
+                        const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || 'Session 1');
                         const category = typeof proj === 'string' ? '' : (proj.taskType || 'Production');
                         return (
                           <div key={idx} className="p-2.5 bg-studio-950 border border-white/5 rounded flex flex-col gap-0.5">
                             <span className="font-bold text-white text-xs">{name}</span>
-                            {(timing || category) && (
-                              <span className="text-[9px] text-studio-accent-purple">{category} | Timing: {timing}</span>
-                            )}
+                            <div className="flex gap-2 text-[9px] text-studio-accent-purple">
+                              <span>{category}</span>
+                              <span className="font-bold">| {sessionName}</span>
+                            </div>
                           </div>
                         );
                       })}
@@ -1491,17 +1492,15 @@ function StudentClient({ onSessionStateChange }) {
                       <div className="space-y-1.5 mt-1.5">
                         {(resConfig.assignmentTopics || []).map((t, i) => {
                           const name = typeof t === 'string' ? t : t.name;
-                          const timing = typeof t === 'string' ? '' : t.timing;
+                          const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || 'Session 1');
                           const category = typeof t === 'string' ? '' : t.taskType;
                           return (
                             <div key={i} className="p-2 bg-studio-950/60 border border-white/5 rounded-lg flex flex-col gap-1">
                               <span className="font-bold text-white text-[10px]">{name}</span>
-                              {(timing || category) && (
-                                <div className="flex gap-2 text-[8px] text-slate-500 font-mono">
-                                  {category && <span className="text-emerald-400 font-bold uppercase">{category}</span>}
-                                  {timing && <span>{timing}</span>}
-                                </div>
-                              )}
+                              <div className="flex gap-2 text-[8px] text-slate-500 font-mono">
+                                {category && <span className="text-emerald-400 font-bold uppercase">{category}</span>}
+                                <span className="text-emerald-400 font-bold">{sessionName}</span>
+                              </div>
                             </div>
                           );
                         })}
@@ -1513,14 +1512,15 @@ function StudentClient({ onSessionStateChange }) {
                       <p className="mt-1">{activeGenai.instructions || 'Execute independent GenAI workflows.'}</p>
                       {(activeGenai.projects || []).map((proj, idx) => {
                         const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                        const timing = typeof proj === 'string' ? '' : (proj.timing || '');
+                        const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || 'Session 1');
                         const category = typeof proj === 'string' ? '' : (proj.taskType || 'GenAI');
                         return (
                           <div key={idx} className="p-2.5 bg-studio-950 border border-white/5 rounded flex flex-col gap-0.5">
                             <span className="font-bold text-white text-xs">{name}</span>
-                            {(timing || category) && (
-                              <span className="text-[9px] text-amber-500">{category} | Timing: {timing}</span>
-                            )}
+                            <div className="flex gap-2 text-[9px] text-amber-500">
+                              <span>{category}</span>
+                              <span className="font-bold">| {sessionName}</span>
+                            </div>
                           </div>
                         );
                       })}
@@ -1904,12 +1904,32 @@ function StudentClient({ onSessionStateChange }) {
                     onChange={(e) => setSelectedPC(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl studio-input text-slate-100 text-xs font-mono font-bold select-dark"
                   >
-                    {Array.from({ length: 25 }, (_, i) => {
-                      const id = `PC-${String(i + 1).padStart(2, '0')}`;
-                      return <option key={id} value={id}>{id}</option>;
-                    })}
+                    {workstationsList.length > 0 ? (
+                      workstationsList.map(ws => (
+                        <option key={ws.id || ws.name} value={ws.name}>
+                          {ws.name}
+                        </option>
+                      ))
+                    ) : (
+                      Array.from({ length: 25 }, (_, i) => {
+                        const id = `PC-${String(i + 1).padStart(2, '0')}`;
+                        return <option key={id} value={id}>{id}</option>;
+                      })
+                    )}
                   </select>
                 )}
+                {(() => {
+                  const currentWs = workstationsList.find(w => w.name === selectedPC);
+                  if (!currentWs || (!currentWs.gpu && !currentWs.ram && !currentWs.vram && !currentWs.processor)) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 bg-studio-950/60 p-2 rounded-lg border border-white/5 font-mono mt-1">
+                      {currentWs.gpu && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-emerald-400 font-semibold">{currentWs.gpu}</span>}
+                      {currentWs.vram && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-amber-400">{currentWs.vram} VRAM</span>}
+                      {currentWs.ram && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-studio-accent-blue">{currentWs.ram} RAM</span>}
+                      {currentWs.processor && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-purple-300">{currentWs.processor}</span>}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Student Name */}

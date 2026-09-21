@@ -18,7 +18,10 @@ import {
   Film, 
   BookOpen, 
   AlertTriangle,
-  Sparkles
+  Sparkles,
+  Tv,
+  Cpu,
+  Monitor
 } from 'lucide-react';
 
 const getSessionTimesTotalHours = (batch) => {
@@ -58,6 +61,7 @@ function GlobalSettingsTab() {
   // Collection States
   const [batches, setBatches] = useState([]);
   const [students, setStudents] = useState([]);
+  const [workstations, setWorkstations] = useState([]);
   const [modes, setModes] = useState([]);
   const [academicSettingsList, setAcademicSettingsList] = useState([]);
 
@@ -69,6 +73,13 @@ function GlobalSettingsTab() {
   const [newStudentAllotted, setNewStudentAllotted] = useState('');
   const [newModeName, setNewModeName] = useState('');
 
+  // Workstation Form inputs
+  const [newWsName, setNewWsName] = useState('');
+  const [newWsGpu, setNewWsGpu] = useState('');
+  const [newWsVram, setNewWsVram] = useState('');
+  const [newWsRam, setNewWsRam] = useState('');
+  const [newWsProcessor, setNewWsProcessor] = useState('');
+
   // Inline editing states
   const [editBatchId, setEditBatchId] = useState(null);
   const [editBatchName, setEditBatchName] = useState('');
@@ -78,6 +89,14 @@ function GlobalSettingsTab() {
   const [editStudentName, setEditStudentName] = useState('');
   const [editStudentBatch, setEditStudentBatch] = useState('');
   const [editStudentAllotted, setEditStudentAllotted] = useState('');
+
+  // Workstation Inline editing states
+  const [editWsId, setEditWsId] = useState(null);
+  const [editWsName, setEditWsName] = useState('');
+  const [editWsGpu, setEditWsGpu] = useState('');
+  const [editWsVram, setEditWsVram] = useState('');
+  const [editWsRam, setEditWsRam] = useState('');
+  const [editWsProcessor, setEditWsProcessor] = useState('');
 
   // Search & Filter States
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
@@ -99,6 +118,14 @@ function GlobalSettingsTab() {
       setStudents(sorted);
     });
 
+    const unsubWorkstations = subscribeCollection('computers', (data) => {
+      const sorted = [...(data || [])].map(c => ({
+        ...c,
+        name: c.name || c.id
+      })).sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+      setWorkstations(sorted);
+    });
+
     const unsubModes = subscribeCollection('modes', (data) => {
       setModes(data);
     });
@@ -110,6 +137,7 @@ function GlobalSettingsTab() {
     return () => {
       unsubBatches();
       unsubStudents();
+      unsubWorkstations();
       unsubModes();
       unsubAcad();
     };
@@ -145,10 +173,24 @@ function GlobalSettingsTab() {
       return;
     }
 
+    const masterBatch = batches.find(b => b.sessionTimes && b.sessionTimes.length > 0);
+    const commonSessions = masterBatch?.sessionTimes || [
+      { name: 'Session 1', timing: '09:30 AM - 10:25 AM' },
+      { name: 'Session 2', timing: '10:25 AM - 11:20 AM' },
+      { name: 'Session 3', timing: '11:35 AM - 12:30 PM' },
+      { name: 'Session 4', timing: '01:15 PM - 02:10 PM' },
+      { name: 'Session 5', timing: '02:10 PM - 03:05 PM' },
+      { name: 'Session 6', timing: '03:05 PM - 04:15 PM' },
+      { name: 'Session 7', timing: '04:15 PM - 06:15 PM' }
+    ];
+    const commonUseSessions = masterBatch?.useSessionTimes ?? true;
+
     try {
       await addDocument('batches', { 
         batchName: newBatchName.trim(),
-        allottedHours: newBatchAllotted ? Number(newBatchAllotted) : null
+        allottedHours: newBatchAllotted ? Number(newBatchAllotted) : null,
+        sessionTimes: commonSessions,
+        useSessionTimes: commonUseSessions
       });
       setNewBatchName('');
       setNewBatchAllotted('');
@@ -246,6 +288,78 @@ function GlobalSettingsTab() {
       } catch (err) {
         console.error('Failed to delete student:', err);
         alert('Failed to delete student: ' + err.message);
+      }
+    }
+  };
+
+  // ----------------------------------------------------
+  // Workstation Operations
+  // ----------------------------------------------------
+  const handleAddWorkstation = async (e) => {
+    e.preventDefault();
+    if (!newWsName.trim()) return;
+
+    const wsName = newWsName.trim();
+
+    if (workstations.some(w => (w.name || w.id || '').toLowerCase() === wsName.toLowerCase())) {
+      alert('Workstation name already exists.');
+      return;
+    }
+
+    try {
+      await updateDocument('computers', wsName, {
+        id: wsName,
+        name: wsName,
+        gpu: newWsGpu.trim() || '',
+        vram: newWsVram.trim() || '',
+        ram: newWsRam.trim() || '',
+        processor: newWsProcessor.trim() || '',
+        status: 'offline'
+      });
+      setNewWsName('');
+      setNewWsGpu('');
+      setNewWsVram('');
+      setNewWsRam('');
+      setNewWsProcessor('');
+    } catch (err) {
+      console.error('Failed to add workstation:', err);
+      alert('Failed to add workstation: ' + err.message);
+    }
+  };
+
+  const handleStartEditWorkstation = (ws) => {
+    setEditWsId(ws.id);
+    setEditWsName(ws.name || ws.id || '');
+    setEditWsGpu(ws.gpu || '');
+    setEditWsVram(ws.vram || '');
+    setEditWsRam(ws.ram || '');
+    setEditWsProcessor(ws.processor || '');
+  };
+
+  const handleSaveWorkstation = async (id) => {
+    if (!editWsName.trim()) return;
+    try {
+      await updateDocument('computers', id, {
+        name: editWsName.trim(),
+        gpu: editWsGpu.trim() || '',
+        vram: editWsVram.trim() || '',
+        ram: editWsRam.trim() || '',
+        processor: editWsProcessor.trim() || ''
+      });
+      setEditWsId(null);
+    } catch (err) {
+      console.error('Failed to update workstation:', err);
+      alert('Failed to update workstation: ' + err.message);
+    }
+  };
+
+  const handleDeleteWorkstation = async (id, name) => {
+    if (confirm(`Are you sure you want to delete workstation "${name}"?`)) {
+      try {
+        await deleteDocument('computers', id);
+      } catch (err) {
+        console.error('Failed to delete workstation:', err);
+        alert('Failed to delete workstation: ' + err.message);
       }
     }
   };
@@ -355,10 +469,10 @@ function GlobalSettingsTab() {
   });
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
       
       {/* 1. MANAGE BATCHES (4 cols) */}
-      <div className="lg:col-span-4 glass-panel p-6 rounded-2xl border border-white/5 space-y-6">
+      <div className="lg:col-span-4 glass-panel p-6 rounded-2xl border border-white/5 space-y-6 flex flex-col h-full">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-studio-accent-purple/10 flex items-center justify-center text-studio-accent-purple">
             <Layers className="h-4 w-4" />
@@ -395,7 +509,7 @@ function GlobalSettingsTab() {
         </form>
 
         {/* Batches List */}
-        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+        <div className="space-y-2 flex-1 max-h-80 overflow-y-auto pr-1">
           {batches.length === 0 ? (
             <p className="text-xs text-slate-600 text-center py-4">No batches added yet.</p>
           ) : (
@@ -465,7 +579,7 @@ function GlobalSettingsTab() {
       </div>
 
       {/* 2. MANAGE STUDENTS (4 cols) */}
-      <div className="lg:col-span-4 glass-panel p-6 rounded-2xl border border-white/5 space-y-6">
+      <div className="lg:col-span-4 glass-panel p-6 rounded-2xl border border-white/5 space-y-6 flex flex-col h-full">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-studio-accent-blue/10 flex items-center justify-center text-studio-accent-blue">
             <Users className="h-4 w-4" />
@@ -545,7 +659,7 @@ function GlobalSettingsTab() {
         </div>
 
         {/* Students List */}
-        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+        <div className="space-y-2 flex-1 max-h-80 overflow-y-auto pr-1">
           {filteredStudentsList.length === 0 ? (
             <p className="text-xs text-slate-600 text-center py-4">No matching students found.</p>
           ) : (
@@ -614,6 +728,186 @@ function GlobalSettingsTab() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 3. MANAGE WORKSTATIONS (4 cols) */}
+      <div className="lg:col-span-4 glass-panel p-6 rounded-2xl border border-white/5 space-y-6 flex flex-col h-full">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+            <Tv className="h-4 w-4" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white text-base">Workstations</h3>
+            <p className="text-[11px] text-slate-500">Hardware specs & workstation nodes</p>
+          </div>
+        </div>
+
+        {/* Add Workstation Form */}
+        <form onSubmit={handleAddWorkstation} className="space-y-2 bg-studio-950/40 p-3 rounded-xl border border-white/5">
+          <div className="grid grid-cols-12 gap-2">
+            <div className="col-span-6">
+              <input
+                type="text"
+                placeholder="Workstation (VFX-01)"
+                value={newWsName}
+                onChange={(e) => setNewWsName(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs font-mono font-semibold"
+                required
+              />
+            </div>
+            <div className="col-span-6">
+              <input
+                type="text"
+                placeholder="Graphics Card (RTX 4090)"
+                value={newWsGpu}
+                onChange={(e) => setNewWsGpu(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-12 gap-2">
+            <div className="col-span-4">
+              <input
+                type="text"
+                placeholder="VRAM (24GB)"
+                value={newWsVram}
+                onChange={(e) => setNewWsVram(e.target.value)}
+                className="w-full px-2 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs"
+              />
+            </div>
+            <div className="col-span-4">
+              <input
+                type="text"
+                placeholder="RAM (64GB)"
+                value={newWsRam}
+                onChange={(e) => setNewWsRam(e.target.value)}
+                className="w-full px-2 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs"
+              />
+            </div>
+            <div className="col-span-4">
+              <input
+                type="text"
+                placeholder="Processor"
+                value={newWsProcessor}
+                onChange={(e) => setNewWsProcessor(e.target.value)}
+                className="w-full px-2 py-1.5 rounded-lg studio-input text-slate-100 placeholder:text-slate-700 text-xs"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg transition duration-200 flex justify-center items-center gap-1.5 text-xs"
+          >
+            <Plus className="h-4 w-4" />
+            Add Workstation
+          </button>
+        </form>
+
+        {/* Workstations List */}
+        <div className="space-y-2 flex-1 max-h-80 overflow-y-auto pr-1">
+          {workstations.length === 0 ? (
+            <p className="text-xs text-slate-600 text-center py-4">No workstations added yet.</p>
+          ) : (
+            workstations.map((ws) => (
+              <div 
+                key={ws.id} 
+                className="p-3 bg-studio-900 border border-white/5 rounded-xl text-xs hover:border-white/10 transition group space-y-1.5"
+              >
+                {editWsId === ws.id ? (
+                  <div className="space-y-2">
+                    <div className="flex gap-1.5 items-center">
+                      <input
+                        type="text"
+                        value={editWsName}
+                        onChange={(e) => setEditWsName(e.target.value)}
+                        placeholder="Name"
+                        className="w-24 px-2 py-1 rounded bg-studio-950 border border-emerald-500/50 text-white text-xs font-mono font-bold outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={editWsGpu}
+                        onChange={(e) => setEditWsGpu(e.target.value)}
+                        placeholder="Graphics Card"
+                        className="flex-1 px-2 py-1 rounded bg-studio-950 border border-emerald-500/50 text-white text-xs outline-none"
+                      />
+                    </div>
+                    <div className="flex gap-1.5 items-center">
+                      <input
+                        type="text"
+                        value={editWsVram}
+                        onChange={(e) => setEditWsVram(e.target.value)}
+                        placeholder="VRAM"
+                        className="w-16 px-1.5 py-1 rounded bg-studio-950 border border-emerald-500/50 text-white text-xs outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={editWsRam}
+                        onChange={(e) => setEditWsRam(e.target.value)}
+                        placeholder="RAM"
+                        className="w-16 px-1.5 py-1 rounded bg-studio-950 border border-emerald-500/50 text-white text-xs outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={editWsProcessor}
+                        onChange={(e) => setEditWsProcessor(e.target.value)}
+                        placeholder="Processor"
+                        className="flex-1 px-1.5 py-1 rounded bg-studio-950 border border-emerald-500/50 text-white text-xs outline-none"
+                      />
+                      <button 
+                        onClick={() => handleSaveWorkstation(ws.id)} 
+                        className="p-1 text-emerald-400 hover:bg-emerald-500/10 rounded"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                      <button 
+                        onClick={() => setEditWsId(null)} 
+                        className="p-1 text-slate-400 hover:bg-white/5 rounded"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white font-mono text-xs">{ws.name}</span>
+                        {ws.gpu && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-studio-950 text-emerald-400 border border-emerald-500/20 font-mono">
+                            {ws.gpu}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition duration-150">
+                        <button
+                          onClick={() => handleStartEditWorkstation(ws)}
+                          className="p-1 text-slate-400 hover:text-white hover:bg-white/5 rounded"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteWorkstation(ws.id, ws.name)}
+                          className="p-1 text-slate-400 hover:text-studio-accent-red hover:bg-studio-accent-red/10 rounded"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    {(ws.vram || ws.ram || ws.processor) && (
+                      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-400 font-mono">
+                        {ws.vram && <span>VRAM: {ws.vram}</span>}
+                        {ws.ram && <span>RAM: {ws.ram}</span>}
+                        {ws.processor && <span>CPU: {ws.processor}</span>}
+                      </div>
+                    )}
                   </>
                 )}
               </div>

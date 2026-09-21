@@ -591,7 +591,7 @@ function MonitoringGrid() {
       </head>
       <body>
         <div class="header">
-          <h1 class="title">VFX & Animation AI Lab</h1>
+          <h1 class="title">VFX & Animation, NAiL [GenAI Lab]</h1>
           <p class="subtitle">${isStudentReport ? 'Student Session History & Total Hours Report' : 'System Usage & Workstation Telemetry Report'}</p>
         </div>
 
@@ -600,17 +600,17 @@ function MonitoringGrid() {
           <tr>
             <td class="metadata-label">Student Name:</td>
             <td class="metadata-value"><strong>${selectedStudentHistory}</strong></td>
-            <td class="metadata-label">Generated Date:</td>
+            <td class="metadata-label">Date:</td>
             <td class="metadata-value">${reportDateStr}</td>
           </tr>
           <tr>
             <td class="metadata-label">Assigned Batch:</td>
             <td class="metadata-value">${studentInfo?.batch || 'N/A'}</td>
-            <td class="metadata-label">Report Date Filter:</td>
+            <td class="metadata-label">Period:</td>
             <td class="metadata-value">${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}</td>
           </tr>
           <tr>
-            <td class="metadata-label">Allotted (HOD Allocated):</td>
+            <td class="metadata-label">Allotted (Selected Session):</td>
             <td class="metadata-value"><strong>${allottedHoursNum} hr 0 min</strong></td>
             <td class="metadata-label">Actual (Student Total):</td>
             <td class="metadata-value"><strong>${allTimeSecs > 0 ? allTimeHrsMins : totalFilteredHours}</strong></td>
@@ -623,11 +623,11 @@ function MonitoringGrid() {
           <tr>
             <td class="metadata-label">Workstation ID:</td>
             <td class="metadata-value"><strong>${selectedPC}</strong></td>
-            <td class="metadata-label">Generated Date:</td>
+            <td class="metadata-label">Date:</td>
             <td class="metadata-value">${reportDateStr}</td>
           </tr>
           <tr>
-            <td class="metadata-label">Report Date Filter:</td>
+            <td class="metadata-label">Period:</td>
             <td class="metadata-value">${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}</td>
             <td class="metadata-label">Recorded Sessions:</td>
             <td class="metadata-value">${filteredLogs.length} entries</td>
@@ -639,7 +639,6 @@ function MonitoringGrid() {
           `}
         </table>
 
-        <h2 class="section-title">Session Telemetry & Total Hours Sheet</h2>
         <table class="data-table">
           <thead>
             <tr>
@@ -649,13 +648,19 @@ function MonitoringGrid() {
               <th style="width: 13%">Logout Time</th>
               <th style="width: 13%">Lab Mode</th>
               <th style="width: 12%">Total Time</th>
-              <th style="width: 18%">Task / Status</th>
+              <th style="width: 18%">Task</th>
             </tr>
           </thead>
           <tbody>
     `;
 
-    if (filteredLogs.length === 0) {
+    const sortedFilteredLogs = [...filteredLogs].sort((a, b) => {
+      const tA = a.startTime ? new Date(a.startTime).getTime() : 0;
+      const tB = b.startTime ? new Date(b.startTime).getTime() : 0;
+      return tA - tB;
+    });
+
+    if (sortedFilteredLogs.length === 0) {
       htmlContent += `
         <tr>
           <td colspan="7" style="text-align: center; color: #64748b; padding: 20px;">
@@ -664,13 +669,13 @@ function MonitoringGrid() {
         </tr>
       `;
     } else {
-      filteredLogs.forEach(log => {
+      sortedFilteredLogs.forEach(log => {
         const dateStr = log.startTime ? new Date(log.startTime).toLocaleDateString() : 'N/A';
         const logInStr = log.startTime ? new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A';
         const logOutStr = log.endTime ? new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Active';
         const hoursUsed = getLogTotalHours(log);
         const col1 = isStudentReport ? (log.computerId || 'Unknown') : (log.studentId || 'Unknown');
-        const taskOrStatus = (log.taskDesc ? log.taskDesc + ' (' + (log.status || 'Normal Logout') + ')' : (log.status || 'Normal Logout'));
+        const taskText = log.taskDesc || 'N/A';
         
         htmlContent += `
           <tr>
@@ -680,7 +685,7 @@ function MonitoringGrid() {
             <td>${logOutStr}</td>
             <td>${log.mode || 'N/A'}</td>
             <td><strong>${hoursUsed}</strong></td>
-            <td>${taskOrStatus}</td>
+            <td>${taskText}</td>
           </tr>
         `;
       });
@@ -696,9 +701,8 @@ function MonitoringGrid() {
           </tfoot>
         </table>
 
-        <div style="margin-top: 50px; display: flex; justify-content: space-between;">
-          <div class="sign-box" style="float: left;">Lab Assistant Signature</div>
-          <div class="sign-box" style="float: right;">HOD Administrator Signature</div>
+        <div style="margin-top: 50px; display: flex; justify-content: flex-end;">
+          <div class="sign-box" style="float: right;">HOD Signature</div>
           <div style="clear: both;"></div>
         </div>
 
@@ -1219,7 +1223,7 @@ function MonitoringGrid() {
                         <p className="font-medium text-studio-accent-purple mt-0.5">{studentInfo?.batch || 'N/A'}</p>
                       </div>
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Allotted (HOD Allocated)</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Allotted (Selected Session)</span>
                         <p className="font-bold font-mono text-white mt-0.5">{allottedHoursNum} hr 0 min</p>
                       </div>
                       <div>

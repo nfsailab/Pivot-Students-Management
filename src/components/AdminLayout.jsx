@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { logoutHOD, isMockMode, subscribeCollection } from '../firebase';
+import { logoutHOD, subscribeCollection } from '../firebase';
 import { 
   LayoutGrid, 
   Settings, 
   Sliders, 
   LogOut, 
   Clock, 
-  Database, 
   User, 
   ChevronRight,
   Tv,
@@ -305,23 +304,13 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
             </p>
           </div>
 
-          {/* Right Header: Clock, Database badge */}
+          {/* Right Header: Clock */}
           <div className="flex items-center gap-6">
             {/* Live Studio Clock */}
             <div className="flex items-center gap-2.5 px-4 py-2 bg-studio-900 border border-white/5 rounded-xl shadow-inner font-mono">
               <Clock className="h-4 w-4 text-studio-accent-purple" />
               <span className="text-sm font-bold text-white">{formattedTime}</span>
               <span className="text-[10px] text-slate-500 font-medium ml-1 shrink-0">{formattedDate}</span>
-            </div>
-
-            {/* DB Status Badge */}
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold ${
-              isMockMode 
-                ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' 
-                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-            }`}>
-              <Database className="h-3.5 w-3.5" />
-              {isMockMode ? 'MOCK DATA' : 'CLOUD STORAGE'}
             </div>
           </div>
         </header>

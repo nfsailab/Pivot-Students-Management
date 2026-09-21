@@ -186,6 +186,12 @@ const generateDefaultComputers = () => {
   return comps;
 };
 
+const DEFAULT_WORKSTATIONS = [
+  { id: 'ws-1', name: 'VFX-01', gpu: 'NVIDIA RTX 4090', vram: '24 GB', ram: '64 GB', processor: 'Intel Core i9-13900K' },
+  { id: 'ws-2', name: 'VFX-02', gpu: 'NVIDIA RTX 4080', vram: '16 GB', ram: '32 GB', processor: 'Intel Core i7-13700K' },
+  { id: 'ws-3', name: 'VFX-03', gpu: 'NVIDIA RTX 3090', vram: '24 GB', ram: '64 GB', processor: 'AMD Ryzen 9 5950X' }
+];
+
 // Initialize localStorage helper
 const initLocalStorage = () => {
   const cleanAndGetArray = (key, defaultVal) => {
@@ -202,6 +208,9 @@ const initLocalStorage = () => {
     }
   };
 
+  if (!localStorage.getItem('vfx_workstations')) {
+    localStorage.setItem('vfx_workstations', JSON.stringify(DEFAULT_WORKSTATIONS));
+  }
   if (!localStorage.getItem('vfx_computers')) {
     localStorage.setItem('vfx_computers', JSON.stringify(generateDefaultComputers()));
   }

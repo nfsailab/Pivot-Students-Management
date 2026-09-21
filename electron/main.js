@@ -6,7 +6,7 @@ const { spawn } = require('child_process');
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.allowPrerelease = true;
+autoUpdater.allowPrerelease = false;
 autoUpdater.allowDowngrade = false;
 
 let mainWindow;
@@ -636,7 +636,7 @@ async function performMultiProviderUpdateCheck() {
 
   try {
     logToFile('Attempting update check via GitHub Releases...');
-    autoUpdater.allowPrerelease = true;
+    autoUpdater.allowPrerelease = false;
     autoUpdater.channel = isStudentMode ? 'student' : 'hod';
     autoUpdater.setFeedURL({
       provider: 'github',
