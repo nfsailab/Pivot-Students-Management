@@ -1,6 +1,6 @@
 {
   "name": "vfx-machine-management",
-  "version": "1.0.1",
+  "version": "1.2.2",
   "description": "Student machine logging client and admin monitoring dashboard for VFX & Animation AI Lab",
   "repository": {
     "type": "git",
