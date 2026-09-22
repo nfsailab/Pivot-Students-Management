@@ -93,6 +93,7 @@ function StudentClient({ onSessionStateChange }) {
   });
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSubmittingSession, setIsSubmittingSession] = useState(false);
   const [updateStatus, setUpdateStatus] = useState('');
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -215,6 +216,13 @@ function StudentClient({ onSessionStateChange }) {
     }
     return () => unsubTraffic && unsubTraffic();
   }, []);
+
+  // Ref to track online count without triggering re-renders in heartbeat useEffect
+  const onlineCountRef = useRef(0);
+  useEffect(() => {
+    onlineCountRef.current = (computers || []).filter(c => c.status === 'online').length;
+  }, [computers]);
+
   const [alertTriggered, setAlertTriggered] = useState({
     hour: false,
     mins30: false,
@@ -426,30 +434,29 @@ function StudentClient({ onSessionStateChange }) {
     let heartbeatInterval = null;
     if (activeSession && activeSession.computerId) {
       const startTimeToSync = activeSession.startTime || new Date().toISOString();
-      
+
+      const sendHeartbeat = () => {
+        updateDocument('computers', activeSession.computerId, {
+          lastActive: new Date().toISOString(),
+          startTime: startTimeToSync
+        }).catch(err => console.error('Heartbeat update failed:', err));
+      };
+
+      sendHeartbeat();
+
       // Calculate effective sync interval (Auto-throttle if active PCs >= 15)
-      const onlineCount = computers.filter(c => c.status === 'online').length;
+      const onlineCount = onlineCountRef.current;
       let effectiveInterval = syncIntervalMs;
       if (autoThrottle && onlineCount >= 15) {
         effectiveInterval = Math.max(effectiveInterval, 30000); // Force Eco 30s+ under high lab load
       }
 
-      updateDocument('computers', activeSession.computerId, {
-        lastActive: new Date().toISOString(),
-        startTime: startTimeToSync
-      }).catch(err => console.error('Heartbeat update failed:', err));
-
-      heartbeatInterval = setInterval(() => {
-        updateDocument('computers', activeSession.computerId, {
-          lastActive: new Date().toISOString(),
-          startTime: startTimeToSync
-        }).catch(err => console.error('Heartbeat update failed:', err));
-      }, effectiveInterval);
+      heartbeatInterval = setInterval(sendHeartbeat, effectiveInterval);
     }
     return () => {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
     };
-  }, [activeSession, syncIntervalMs, autoThrottle, computers]);
+  }, [activeSession, syncIntervalMs, autoThrottle]);
 
   // 4. Remote Logout Listener (HOD Override Reset)
   useEffect(() => {
@@ -786,8 +793,16 @@ function StudentClient({ onSessionStateChange }) {
   // ----------------------------------------------------
   const handleStartSession = async (e) => {
     e.preventDefault();
-    if (!selectedStudent || !selectedPC || !(todayWork || '').trim()) {
-      alert('Please fill out all session fields.');
+    if (!selectedStudent || !selectedStudent.trim()) {
+      alert('Please select a student name before starting your session.');
+      return;
+    }
+    if (!selectedPC || !selectedPC.trim()) {
+      alert('Please select a workstation ID.');
+      return;
+    }
+    if (!(todayWork || '').trim() && !selectedTopicObj) {
+      alert("Please fill out Today's Work / Assignment Task or select a guideline/topic from the bulletin board on the right.");
       return;
     }
 
@@ -808,22 +823,52 @@ function StudentClient({ onSessionStateChange }) {
       return;
     }
 
-    // PC OCCUPANCY CHECK: Verify if the selected PC is already online
-    const occupiedPc = computers.find(
-      c => c.id === selectedPC && c.status === 'online'
-    );
+    if (isSubmittingSession) return;
+
+    // PC OCCUPANCY CHECK: Verify if the selected PC is actively online (with self-healing for stale shutdown locks)
+    const occupiedPc = computers.find(c => {
+      if (c.id !== selectedPC || c.status !== 'online') return false;
+      // Must have an active current user to be considered occupied
+      if (!c.currentUser || !c.currentUser.trim()) return false;
+
+      // Self-healing check: If PC has been inactive for > 45s (stale lock from forced shutdown/power off)
+      if (c.lastActive) {
+        const lastActiveMs = new Date(c.lastActive).getTime();
+        if (!isNaN(lastActiveMs)) {
+          const elapsedSecs = (Date.now() - lastActiveMs) / 1000;
+          if (elapsedSecs > 45) {
+            console.warn(`Self-healing: Overriding stale shutdown lock on ${c.id} (inactive for ${Math.floor(elapsedSecs)}s).`);
+            return false; // Treat as vacant
+          }
+        }
+      }
+      return true;
+    });
 
     if (occupiedPc) {
-      setConcurrencyError(`Access Denied: Workstation ${selectedPC} is currently occupied by ${occupiedPc.currentUser}. Please select a vacant workstation or contact HOD.`);
-      return;
+      // Check if occupied by SAME student on SAME computer (e.g. re-click or re-login)
+      const isSameStudent = (occupiedPc.currentUser || '').trim().toLowerCase() === selectedStudent.trim().toLowerCase();
+      if (!isSameStudent) {
+        const warningMsg = `Access Denied: Workstation ${selectedPC} is currently occupied by ${occupiedPc.currentUser}. Please select a vacant workstation or contact HOD.`;
+        setConcurrencyError(warningMsg);
+        alert(warningMsg);
+        return;
+      } else {
+        console.log(`Same student (${selectedStudent}) re-initializing session on ${selectedPC}. Overriding lock.`);
+      }
     }
+
+    setIsSubmittingSession(true);
+
+    const topicName = selectedTopicObj ? (typeof selectedTopicObj === 'string' ? selectedTopicObj : (selectedTopicObj.name || '')) : '';
+    const sessionTaskDesc = (todayWork || '').trim() || topicName;
 
     const sessionData = {
       computerId: selectedPC,
       studentName: selectedStudent,
       studentBatch: selectedBatch,
       mode: selectedMode,
-      taskDesc: (todayWork || '').trim(),
+      taskDesc: sessionTaskDesc,
       startTime: new Date().toISOString()
     };
 
@@ -834,7 +879,7 @@ function StudentClient({ onSessionStateChange }) {
         currentUser: selectedStudent,
         currentBatch: selectedBatch,
         currentMode: selectedMode,
-        currentTask: (todayWork || '').trim(),
+        currentTask: sessionTaskDesc,
         startTime: sessionData.startTime,
         lastActive: new Date().toISOString(),
         message: null
@@ -862,6 +907,8 @@ function StudentClient({ onSessionStateChange }) {
     } catch (err) {
       console.error('Failed to log in workstation:', err);
       alert('Session connection error. Please try again.');
+    } finally {
+      setIsSubmittingSession(false);
     }
   };
 
@@ -2013,8 +2060,7 @@ function StudentClient({ onSessionStateChange }) {
             {/* Submit button */}
             <button
               type="submit"
-              disabled={!selectedStudent || !(todayWork || '').trim()}
-              className="w-full py-3.5 bg-gradient-to-r from-studio-accent-purple to-studio-accent-blue hover:from-studio-accent-purple/95 hover:to-studio-accent-blue/95 text-white font-bold rounded-xl transition duration-300 shadow-glow-purple flex items-center justify-center gap-2 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-45 disabled:pointer-events-none text-xs tracking-wider uppercase mt-2"
+              className="w-full py-3.5 bg-gradient-to-r from-studio-accent-purple to-studio-accent-blue hover:from-studio-accent-purple/95 hover:to-studio-accent-blue/95 text-white font-bold rounded-xl transition duration-300 shadow-glow-purple flex items-center justify-center gap-2 hover:-translate-y-0.5 active:translate-y-0 text-xs tracking-wider uppercase mt-2 cursor-pointer"
             >
               <Play className="h-4 w-4" />
               Initialize Session & Start Lab Work

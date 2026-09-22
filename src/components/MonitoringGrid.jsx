@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { subscribeCollection, updateDocument, addDocument } from '../firebase';
 import { 
   Tv, 
@@ -16,7 +16,8 @@ import {
   X,
   Calendar,
   Download,
-  MessageSquare
+  MessageSquare,
+  RefreshCw
 } from 'lucide-react';
 
 const getSessionTimesTotalHours = (batch) => {
@@ -159,13 +160,20 @@ function MonitoringGrid() {
     };
   }, []);
 
-  // Watchdog: detect if any computer marked online has stopped sending heartbeats (>120 seconds / 2 mins)
+  const computersRef = useRef([]);
+  const studentsListRef = useRef([]);
+  useEffect(() => { computersRef.current = computers; }, [computers]);
+  useEffect(() => { studentsListRef.current = studentsList; }, [studentsList]);
+
+  // Watchdog: detect if any computer marked online has stopped sending heartbeats (>45 seconds)
   useEffect(() => {
     const watchdog = setInterval(() => {
-      computers.forEach(async (pc) => {
+      const currentComps = computersRef.current || [];
+      const currentStudents = studentsListRef.current || [];
+      currentComps.forEach(async (pc) => {
         if (pc.status === 'online' && pc.lastActive) {
           const elapsedSecs = (Date.now() - new Date(pc.lastActive).getTime()) / 1000;
-          if (elapsedSecs > 120) {
+          if (elapsedSecs > 45) {
             console.warn(`Watchdog detected forced shutdown or offline on ${pc.id}. Last active ${Math.floor(elapsedSecs)}s ago.`);
             try {
               const startMs = pc.startTime ? new Date(pc.startTime).getTime() : new Date(pc.lastActive).getTime();
@@ -185,7 +193,7 @@ function MonitoringGrid() {
                 totalHours: totalHours
               });
 
-              const studentDoc = studentsList.find(s => (s.name || '').toLowerCase() === (pc.currentUser || '').toLowerCase());
+              const studentDoc = currentStudents.find(s => (s.name || '').toLowerCase() === (pc.currentUser || '').toLowerCase());
               if (studentDoc) {
                 const newTotalSecs = (studentDoc.totalSeconds || 0) + durationSecs;
                 const newTotalHours = Number((newTotalSecs / 3600).toFixed(2));
@@ -212,10 +220,10 @@ function MonitoringGrid() {
           }
         }
       });
-    }, 15000);
+    }, 10000);
 
     return () => clearInterval(watchdog);
-  }, [computers, studentsList]);
+  }, []);
 
   // Force reset computer session
   const handleResetSession = async (pcId) => {
@@ -228,10 +236,36 @@ function MonitoringGrid() {
           currentTask: null,
           currentSession: null,
           startTime: null,
-          lastActive: new Date().toISOString()
+          lastActive: new Date().toISOString(),
+          message: null
         });
       } catch (err) {
         console.error(`Failed to reset session on ${pcId}:`, err);
+      }
+    }
+  };
+
+  // Clear all workstation locks across all PCs
+  const handleClearAllLocks = async () => {
+    if (confirm('Reset and clear all workstation session locks across the entire lab?')) {
+      try {
+        for (const pc of computers) {
+          if (pc.status === 'online' || pc.currentUser) {
+            await updateDocument('computers', pc.id, {
+              status: 'offline',
+              currentUser: null,
+              currentMode: null,
+              currentTask: null,
+              currentSession: null,
+              startTime: null,
+              lastActive: new Date().toISOString(),
+              message: null
+            });
+          }
+        }
+        alert('All workstation locks cleared successfully! Every PC is now vacant.');
+      } catch (err) {
+        console.error('Failed to clear workstation locks:', err);
       }
     }
   };
@@ -927,6 +961,14 @@ function MonitoringGrid() {
             <History className="h-3.5 w-3.5" />
             Students History Records
           </button>
+          <button
+            onClick={handleClearAllLocks}
+            className="px-3.5 py-1.5 rounded-lg text-xs font-extrabold bg-rose-500/15 border border-rose-500/30 text-rose-400 hover:bg-rose-500 hover:text-white transition flex items-center gap-1.5 shrink-0 shadow-sm"
+            title="Reset and clear all workstation session locks across all lab PCs"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Reset All PC Locks
+          </button>
         </div>
       </div>
 
@@ -1031,27 +1073,25 @@ function MonitoringGrid() {
                   
                   <div className="flex gap-1.5 items-center">
                     {isOnline && (
-                      <>
-                        <button
-                          onClick={() => {
-                            setMessagingPC(pc.id);
-                            setMessageText('');
-                          }}
-                          className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-white transition shrink-0 flex items-center gap-1 leading-none"
-                          title="Send Message"
-                        >
-                          <MessageSquare className="h-3.5 w-3.5" />
-                        </button>
-                        
-                        <button
-                          onClick={() => handleResetSession(pc.id)}
-                          className="p-1.5 rounded bg-studio-accent-red/10 border border-studio-accent-red/20 text-studio-accent-red hover:bg-studio-accent-red hover:text-white transition shrink-0 flex items-center gap-1 leading-none"
-                          title="Remote Logout"
-                        >
-                          <LogOut className="h-3.5 w-3.5" />
-                        </button>
-                      </>
+                      <button
+                        onClick={() => {
+                          setMessagingPC(pc.id);
+                          setMessageText('');
+                        }}
+                        className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-white transition shrink-0 flex items-center gap-1 leading-none"
+                        title="Send Message"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                      </button>
                     )}
+                    
+                    <button
+                      onClick={() => handleResetSession(pc.id)}
+                      className="p-1.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500 hover:text-white transition shrink-0 flex items-center gap-1 leading-none"
+                      title={isOnline ? "Force Remote Logout" : "Clear Workstation Data / Reset Lock"}
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 </div>
 
