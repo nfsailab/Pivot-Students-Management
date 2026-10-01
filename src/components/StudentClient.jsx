@@ -82,14 +82,28 @@ function StudentClient({ onSessionStateChange }) {
   const [messagesList, setMessagesList] = useState([]);
   const [showShutdownModal, setShowShutdownModal] = useState(false);
 
+  // Helper for semver version comparison
+  const isNewerVersion = (latest, current) => {
+    if (!latest || !current) return false;
+    const clean = (v) => String(v).replace(/^v/i, '').split('-')[0];
+    const lParts = clean(latest).split('.').map(Number);
+    const cParts = clean(current).split('.').map(Number);
+    for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+      const l = lParts[i] || 0;
+      const c = cParts[i] || 0;
+      if (l > c) return true;
+      if (l < c) return false;
+    }
+    return false;
+  };
+
   // Client Update States
   const [appVersion, setAppVersion] = useState(() => {
     const stored = localStorage.getItem('student_client_version');
-    if (!stored || stored === '1.0 Beta') {
-      localStorage.setItem('student_client_version', '1.0.0-beta');
-      return '1.0.0-beta';
+    if (stored && stored !== '1.0 Beta' && stored !== '1.0.0-beta') {
+      return stored;
     }
-    return stored;
+    return '1.2.2';
   });
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -131,6 +145,7 @@ function StudentClient({ onSessionStateChange }) {
           setIsUpdating(false);
           setUpdateStatus('');
           if (info && info.version) setTargetVersion(info.version);
+          if (info && info.downloadUrl) setDownloadUrl(info.downloadUrl);
           setUpdateAvailable(true);
         })
       : null;
@@ -185,10 +200,10 @@ function StudentClient({ onSessionStateChange }) {
   useEffect(() => {
     const unsubscribe = subscribeCollection('app_versions', (versions) => {
       const studentConfig = versions.find(v => v.id === 'student');
-      if (studentConfig) {
+      if (studentConfig && studentConfig.version) {
         setTargetVersion(studentConfig.version);
-        setDownloadUrl(studentConfig.downloadUrl);
-        if (studentConfig.version && studentConfig.version !== appVersion) {
+        if (studentConfig.downloadUrl) setDownloadUrl(studentConfig.downloadUrl);
+        if (isNewerVersion(studentConfig.version, appVersion)) {
           setUpdateAvailable(true);
         }
       }
@@ -780,11 +795,11 @@ function StudentClient({ onSessionStateChange }) {
       setIsUpdating(true);
       setUpdateStatus('Starting download from GitHub...');
       setUpdateProgress(0);
-      window.electronAPI.startUpdateDownload();
-    } else if (downloadUrl) {
+      window.electronAPI.startUpdateDownload(downloadUrl);
+    } else if (downloadUrl && !downloadUrl.includes('your_student_folder_id')) {
       window.open(downloadUrl, '_blank');
     } else {
-      alert('Update link is not configured. Please contact the administrator.');
+      window.open('https://github.com/nfsailab/Pivot-Students-Management/releases/latest', '_blank');
     }
   };
 

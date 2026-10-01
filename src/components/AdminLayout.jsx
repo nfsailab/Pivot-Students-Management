@@ -22,14 +22,28 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   const [time, setTime] = useState(new Date());
   const [showTaskManagerModal, setShowTaskManagerModal] = useState(false);
 
+  // Helper for semver version comparison
+  const isNewerVersion = (latest, current) => {
+    if (!latest || !current) return false;
+    const clean = (v) => String(v).replace(/^v/i, '').split('-')[0];
+    const lParts = clean(latest).split('.').map(Number);
+    const cParts = clean(current).split('.').map(Number);
+    for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+      const l = lParts[i] || 0;
+      const c = cParts[i] || 0;
+      if (l > c) return true;
+      if (l < c) return false;
+    }
+    return false;
+  };
+
   // Client Update States
   const [appVersion, setAppVersion] = useState(() => {
     const stored = localStorage.getItem('hod_client_version');
-    if (!stored || stored === '1.0 Beta') {
-      localStorage.setItem('hod_client_version', '1.0.0-beta');
-      return '1.0.0-beta';
+    if (stored && stored !== '1.0 Beta' && stored !== '1.0.0-beta') {
+      return stored;
     }
-    return stored;
+    return '1.2.2';
   });
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -70,6 +84,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
           setIsUpdating(false);
           setUpdateStatus('');
           if (info && info.version) setTargetVersion(info.version);
+          if (info && info.downloadUrl) setDownloadUrl(info.downloadUrl);
           setUpdateAvailable(true);
         })
       : null;
@@ -124,10 +139,10 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   useEffect(() => {
     const unsubscribe = subscribeCollection('app_versions', (versions) => {
       const hodConfig = versions.find(v => v.id === 'hod');
-      if (hodConfig) {
+      if (hodConfig && hodConfig.version) {
         setTargetVersion(hodConfig.version);
-        setDownloadUrl(hodConfig.downloadUrl);
-        if (hodConfig.version && hodConfig.version !== appVersion) {
+        if (hodConfig.downloadUrl) setDownloadUrl(hodConfig.downloadUrl);
+        if (isNewerVersion(hodConfig.version, appVersion)) {
           setUpdateAvailable(true);
         }
       }
@@ -146,7 +161,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
       setTimeout(() => {
         setIsUpdating(false);
         setUpdateStatus('');
-        if (targetVersion && targetVersion !== appVersion) {
+        if (targetVersion && isNewerVersion(targetVersion, appVersion)) {
           setUpdateAvailable(true);
         } else {
           alert(`You are up to date! Currently running version ${appVersion}.`);
@@ -161,11 +176,11 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
       setIsUpdating(true);
       setUpdateStatus('Starting download from GitHub...');
       setUpdateProgress(0);
-      window.electronAPI.startUpdateDownload();
-    } else if (downloadUrl) {
+      window.electronAPI.startUpdateDownload(downloadUrl);
+    } else if (downloadUrl && !downloadUrl.includes('your_hod_folder_id')) {
       window.open(downloadUrl, '_blank');
     } else {
-      alert('Update link is not configured. Please contact the administrator.');
+      window.open('https://github.com/nfsailab/Pivot-Students-Management/releases/latest', '_blank');
     }
   };
 

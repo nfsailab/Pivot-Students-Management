@@ -557,6 +557,49 @@ ipcMain.on('notification-clicked', () => {
 // ==========================================
 // OTA AUTO-UPDATER IPC HANDLERS & EVENTS
 // ==========================================
+const https = require('https');
+
+function isNewerVersionStr(latest, current) {
+  if (!latest || !current) return false;
+  const clean = (v) => String(v).replace(/^v/i, '').split('-')[0];
+  const lParts = clean(latest).split('.').map(Number);
+  const cParts = clean(current).split('.').map(Number);
+  for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+    const l = lParts[i] || 0;
+    const c = cParts[i] || 0;
+    if (l > c) return true;
+    if (l < c) return false;
+  }
+  return false;
+}
+
+function fetchGitHubLatestReleaseData() {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/nfsailab/Pivot-Students-Management/releases/latest',
+      headers: {
+        'User-Agent': 'VFX-Lab-Pilot-Updater'
+      }
+    };
+    https.get(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(e);
+          }
+        } else {
+          reject(new Error(`GitHub API HTTP ${res.statusCode}`));
+        }
+      });
+    }).on('error', (err) => reject(err));
+  });
+}
+
 function sendToWindows(channel, data) {
   BrowserWindow.getAllWindows().forEach(win => {
     if (win && !win.isDestroyed()) {
@@ -593,14 +636,14 @@ autoUpdater.on('error', (err) => {
   if (msg.includes('No published versions on GitHub')) {
     logToFile('AutoUpdater: No published versions found on GitHub.');
     sendToWindows('update-error', {
-      message: `No published releases found on GitHub.\n\nTo trigger an update:\n1. Increase "version" in package.json (e.g. 1.0.1).\n2. Create and push a new release/tag (e.g. v1.0.1) on GitHub so GitHub Actions publishes the new version.`
+      message: `No published releases found on GitHub.\n\nTo trigger an update:\n1. Increase "version" in package.json (e.g. 1.2.3).\n2. Create and push a new release/tag (e.g. v1.2.3) on GitHub so GitHub Actions publishes the new version.`
     });
     return;
   }
   if (msg.includes('404') || msg.includes('releases.atom') || msg.includes('latest.yml') || msg.includes('student.yml') || msg.includes('hod.yml')) {
     logToFile('AutoUpdater 404 error: Repository may be Private or Release is still in Draft state.');
     sendToWindows('update-error', { 
-      message: 'Could not fetch release from GitHub (404 Not Found). Please verify that:\n1. Your GitHub repository visibility is set to Public.\n2. The GitHub Release is Published (not Draft).\n3. A version higher than 1.0.0-beta is published.' 
+      message: 'Could not fetch release from GitHub (404 Not Found). Please verify that:\n1. Your GitHub repository visibility is set to Public.\n2. The GitHub Release is Published (not Draft).\n3. A version higher than current version is published.' 
     });
     return;
   }
@@ -631,11 +674,12 @@ async function performMultiProviderUpdateCheck() {
   }
 
   isCheckingUpdate = true;
-  suppressErrorEvent = false;
+  suppressErrorEvent = true;
   sendToWindows('update-status', { status: 'checking', text: 'Checking for updates...' });
 
+  // Tier 1: Try autoUpdater with specific channel (student or hod)
   try {
-    logToFile('Attempting update check via GitHub Releases...');
+    logToFile('Tier 1: Attempting update check via GitHub Releases (channel)...');
     autoUpdater.allowPrerelease = false;
     autoUpdater.channel = isStudentMode ? 'student' : 'hod';
     autoUpdater.setFeedURL({
@@ -646,43 +690,69 @@ async function performMultiProviderUpdateCheck() {
 
     const result = await autoUpdater.checkForUpdates();
     if (result && result.updateInfo) {
+      suppressErrorEvent = false;
       isCheckingUpdate = false;
       return;
     }
   } catch (err) {
-    logToFile(`GitHub provider update check error: ${err ? err.message : err}`);
-    const errStr = (err ? (err.message || err.toString()) : '').toLowerCase();
+    logToFile(`Tier 1 update check error: ${err ? err.message : err}`);
+  }
 
-    if (errStr.includes('no published versions on github')) {
-      sendToWindows('update-error', {
-        message: `No published releases found on GitHub.\n\nTo trigger an update:\n1. Increase "version" in package.json (e.g. 1.0.1).\n2. Create and push a new release/tag (e.g. v1.0.1) on GitHub so GitHub Actions publishes the new version.`
-      });
+  // Tier 2: Fallback to default channel (latest.yml)
+  try {
+    logToFile('Tier 2: Fallback update check via GitHub Releases (latest.yml)...');
+    autoUpdater.channel = null;
+    const result = await autoUpdater.checkForUpdates();
+    if (result && result.updateInfo) {
+      suppressErrorEvent = false;
       isCheckingUpdate = false;
       return;
     }
+  } catch (err) {
+    logToFile(`Tier 2 update check error: ${err ? err.message : err}`);
+  }
 
-    // If check encountered a 404 (no release or yml file found on server yet)
-    if (errStr.includes('404') || errStr.includes('releases.atom') || errStr.includes('yml')) {
-      logToFile('Update check returned 404: Repository is Private or Release is Draft.');
-      sendToWindows('update-error', { 
-        message: 'Could not fetch release from GitHub (404 Not Found).\n\nPlease check:\n1. GitHub Repository visibility is set to PUBLIC.\n2. Release is PUBLISHED (not Draft).\n3. Version in package.json was increased for the new release.' 
-      });
-      isCheckingUpdate = false;
-      return;
-    }
+  suppressErrorEvent = false;
 
-    let cleanMessage = err ? (err.message || err.toString()) : 'Error checking for updates.';
-    if (cleanMessage.includes('Headers:')) {
-      cleanMessage = cleanMessage.split('Headers:')[0].trim();
-    }
-    if (cleanMessage.includes('net::ERR_INTERNET_DISCONNECTED') || cleanMessage.includes('ENOTFOUND') || cleanMessage.includes('net::ERR_NAME_NOT_RESOLVED')) {
-      cleanMessage = 'Network connection error while checking for updates. Please verify your internet connection.';
-    }
+  // Tier 3: Direct GitHub REST API Query
+  try {
+    logToFile('Tier 3: Querying GitHub REST API for latest release...');
+    const releaseData = await fetchGitHubLatestReleaseData();
+    if (releaseData && releaseData.tag_name) {
+      const latestVer = releaseData.tag_name;
+      const currentVer = app.getVersion();
+      logToFile(`GitHub REST API latest version: ${latestVer}, current app version: ${currentVer}`);
 
-    sendToWindows('update-error', { message: cleanMessage });
+      if (isNewerVersionStr(latestVer, currentVer)) {
+        const assetModeStr = isStudentMode ? 'student' : 'hod';
+        const matchingAsset = (releaseData.assets || []).find(a => 
+          a.name.toLowerCase().includes(assetModeStr) || a.name.toLowerCase().endsWith('.exe')
+        );
+
+        const downloadUrl = matchingAsset ? matchingAsset.browser_download_url : releaseData.html_url;
+
+        sendToWindows('update-available', {
+          version: latestVer.replace(/^v/i, ''),
+          releaseName: releaseData.name || latestVer,
+          releaseNotes: releaseData.body || 'New version available.',
+          downloadUrl: downloadUrl
+        });
+        isCheckingUpdate = false;
+        return;
+      } else {
+        sendToWindows('update-not-available', { version: currentVer });
+        isCheckingUpdate = false;
+        return;
+      }
+    }
+  } catch (err) {
+    logToFile(`Tier 3 GitHub REST API error: ${err ? err.message : err}`);
   }
 
   isCheckingUpdate = false;
+  sendToWindows('update-error', { 
+    message: 'Could not fetch release from GitHub.\n\nPlease verify that:\n1. Your internet connection is active.\n2. GitHub Repository visibility is set to Public.\n3. A published GitHub Release higher than version 1.2.2 exists.' 
+  });
 }
 
 ipcMain.on('check-for-updates', () => {
@@ -695,11 +765,15 @@ ipcMain.on('check-for-updates', () => {
   });
 });
 
-ipcMain.on('start-update-download', () => {
-  logToFile('IPC start-update-download triggered');
+ipcMain.on('start-update-download', (event, customUrl) => {
+  logToFile(`IPC start-update-download triggered. Custom URL: ${customUrl || 'none'}`);
+  if (customUrl && typeof customUrl === 'string' && customUrl.startsWith('http')) {
+    require('electron').shell.openExternal(customUrl);
+    return;
+  }
   autoUpdater.downloadUpdate().catch(err => {
     logToFile(`downloadUpdate catch: ${err.message}`);
-    sendToWindows('update-error', { message: err.message });
+    require('electron').shell.openExternal('https://github.com/nfsailab/Pivot-Students-Management/releases/latest');
   });
 });
 
