@@ -659,6 +659,9 @@ autoUpdater.on('download-progress', (progressObj) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   logToFile(`AutoUpdater: update-downloaded v${info.version}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(false);
+  }
   sendToWindows('update-downloaded', info);
 });
 
@@ -751,7 +754,7 @@ async function performMultiProviderUpdateCheck() {
 
   isCheckingUpdate = false;
   sendToWindows('update-error', { 
-    message: 'Could not fetch release from GitHub.\n\nPlease verify that:\n1. Your internet connection is active.\n2. GitHub Repository visibility is set to Public.\n3. A published GitHub Release higher than version 1.2.2 exists.' 
+    message: 'Could not fetch release from GitHub.\n\nPlease verify that:\n1. Your internet connection is active.\n2. GitHub Repository visibility is set to Public.\n3. A published GitHub Release higher than version 2.0.0 exists.' 
   });
 }
 
@@ -767,18 +770,32 @@ ipcMain.on('check-for-updates', () => {
 
 ipcMain.on('start-update-download', (event, customUrl) => {
   logToFile(`IPC start-update-download triggered. Custom URL: ${customUrl || 'none'}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(false);
+  }
   if (customUrl && typeof customUrl === 'string' && customUrl.startsWith('http')) {
     require('electron').shell.openExternal(customUrl);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.minimize();
+    }
     return;
   }
   autoUpdater.downloadUpdate().catch(err => {
     logToFile(`downloadUpdate catch: ${err.message}`);
     require('electron').shell.openExternal('https://github.com/nfsailab/Pivot-Students-Management/releases/latest');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.minimize();
+    }
   });
 });
 
 ipcMain.on('install-update', () => {
   logToFile('IPC install-update triggered');
   killWatchdog();
-  autoUpdater.quitAndInstall();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setClosable(true);
+    mainWindow.hide();
+  }
+  autoUpdater.quitAndInstall(false, true);
 });

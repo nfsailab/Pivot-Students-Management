@@ -164,7 +164,7 @@ function StudentClient({ onSessionStateChange }) {
           setIsUpdating(true);
           const percent = Math.round(progressObj.percent || 0);
           setUpdateProgress(percent);
-          setUpdateStatus(`Downloading update from GitHub... ${percent}%`);
+          setUpdateStatus(`DOWNLOADING... ${percent}%`);
         })
       : null;
 
@@ -793,7 +793,7 @@ function StudentClient({ onSessionStateChange }) {
     setUpdateAvailable(false);
     if (window.electronAPI && typeof window.electronAPI.startUpdateDownload === 'function') {
       setIsUpdating(true);
-      setUpdateStatus('Starting download from GitHub...');
+      setUpdateStatus('DOWNLOADING...');
       setUpdateProgress(0);
       window.electronAPI.startUpdateDownload(downloadUrl);
     } else if (downloadUrl && !downloadUrl.includes('your_student_folder_id')) {

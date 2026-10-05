@@ -103,7 +103,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
           setIsUpdating(true);
           const percent = Math.round(progressObj.percent || 0);
           setUpdateProgress(percent);
-          setUpdateStatus(`Downloading update from GitHub... ${percent}%`);
+          setUpdateStatus(`DOWNLOADING... ${percent}%`);
         })
       : null;
 
@@ -153,11 +153,11 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   const handleCheckUpdates = () => {
     if (window.electronAPI && typeof window.electronAPI.checkForUpdates === 'function') {
       setIsUpdating(true);
-      setUpdateStatus('Connecting to GitHub Releases...');
+      setUpdateStatus('CHECKING FOR UPDATES...');
       window.electronAPI.checkForUpdates();
     } else {
       setIsUpdating(true);
-      setUpdateStatus('Checking for updates...');
+      setUpdateStatus('CHECKING FOR UPDATES...');
       setTimeout(() => {
         setIsUpdating(false);
         setUpdateStatus('');
@@ -174,7 +174,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
     setUpdateAvailable(false);
     if (window.electronAPI && typeof window.electronAPI.startUpdateDownload === 'function') {
       setIsUpdating(true);
-      setUpdateStatus('Starting download from GitHub...');
+      setUpdateStatus('DOWNLOADING...');
       setUpdateProgress(0);
       window.electronAPI.startUpdateDownload(downloadUrl);
     } else if (downloadUrl && !downloadUrl.includes('your_hod_folder_id')) {
