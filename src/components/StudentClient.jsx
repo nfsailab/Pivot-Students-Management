@@ -103,7 +103,7 @@ function StudentClient({ onSessionStateChange }) {
     if (stored && stored !== '1.0 Beta' && stored !== '1.0.0-beta') {
       return stored;
     }
-    return '2.0.0';
+    return '2.0.1';
   });
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
