@@ -1,6 +1,6 @@
 {
-  "appId": "com.neovfx.hoddashboard",
-  "productName": "VFX Lab Pilot HOD Dashboard",
+  "appId": "com.pivot.hoddashboard",
+  "productName": "PIVOT HOD Dashboard",
   "directories": {
     "output": "dist-electron/hod"
   },
@@ -20,7 +20,7 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "VFX Lab Pilot HOD Dashboard",
+    "shortcutName": "PIVOT HOD Dashboard",
     "perMachine": true,
     "include": "electron/installer.nsh"
   },

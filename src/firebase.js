@@ -234,8 +234,8 @@ const initLocalStorage = () => {
   }
   if (!localStorage.getItem('vfx_app_versions')) {
     localStorage.setItem('vfx_app_versions', JSON.stringify([
-      { id: 'student', version: '1.0.0-beta', downloadUrl: 'https://drive.google.com/drive/folders/your_student_folder_id' },
-      { id: 'hod', version: '1.0.0-beta', downloadUrl: 'https://drive.google.com/drive/folders/your_hod_folder_id' }
+      { id: 'student', version: '2.0.0', downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest' },
+      { id: 'hod', version: '2.0.0', downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest' }
     ]));
   }
   if (!localStorage.getItem('vfx_auth_user')) {

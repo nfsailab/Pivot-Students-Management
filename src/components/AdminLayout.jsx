@@ -43,7 +43,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
     if (stored && stored !== '1.0 Beta' && stored !== '1.0.0-beta') {
       return stored;
     }
-    return '1.2.2';
+    return '2.0.0';
   });
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);

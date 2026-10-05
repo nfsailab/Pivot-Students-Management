@@ -1,6 +1,6 @@
 {
-  "appId": "com.neovfx.studentclient",
-  "productName": "VFX Lab Pilot Student Client",
+  "appId": "com.pivot.studentclient",
+  "productName": "PIVOT Student Client",
   "directories": {
     "output": "dist-electron/student"
   },
@@ -24,7 +24,7 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "VFX Lab Pilot Student Client",
+    "shortcutName": "PIVOT Student Client",
     "perMachine": true,
     "include": "electron/installer.nsh"
   },
