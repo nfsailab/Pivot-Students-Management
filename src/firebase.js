@@ -668,12 +668,12 @@ const seedFirebaseDatabase = async () => {
     if (versionsSnap.empty) {
       console.log('🌱 Seeding default app versions to Firestore...');
       await setDoc(doc(db, 'app_versions', 'student'), {
-        version: '1.0.0-beta',
-        downloadUrl: 'https://drive.google.com/drive/folders/your_student_folder_id'
+        version: '2.0.1',
+        downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest'
       });
       await setDoc(doc(db, 'app_versions', 'hod'), {
-        version: '1.0.0-beta',
-        downloadUrl: 'https://drive.google.com/drive/folders/your_hod_folder_id'
+        version: '2.0.1',
+        downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest'
       });
     }
 
