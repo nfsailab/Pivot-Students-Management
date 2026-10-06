@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import nailLogo from '../nail-logo.png';
+import packageJson from '../../package.json';
 import { 
   subscribeCollection, 
   subscribeDocument,
@@ -98,13 +99,7 @@ function StudentClient({ onSessionStateChange }) {
   };
 
   // Client Update States
-  const [appVersion, setAppVersion] = useState(() => {
-    const stored = localStorage.getItem('student_client_version');
-    if (stored && stored !== '1.0 Beta' && stored !== '1.0.0-beta') {
-      return stored;
-    }
-    return '2.0.1';
-  });
+  const [appVersion, setAppVersion] = useState(() => packageJson.version);
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [isSubmittingSession, setIsSubmittingSession] = useState(false);
@@ -122,7 +117,6 @@ function StudentClient({ onSessionStateChange }) {
         .then(ver => {
           if (ver) {
             setAppVersion(ver);
-            localStorage.setItem('student_client_version', ver);
           }
         })
         .catch(err => console.error('Failed to get app version:', err));

@@ -11,16 +11,33 @@ import {
   Tv,
   RefreshCw,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  HelpCircle,
+  X,
+  ChevronDown
 } from 'lucide-react';
 import logoImg from '../logo.png';
 import nailLogo from '../nail-logo.png';
+import pivotLogo from '../pivot-logo.png';
 import CapacityMeter from './CapacityMeter';
 import TaskManagerModal from './TaskManagerModal';
+import packageJson from '../../package.json';
 
 function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
   const [time, setTime] = useState(new Date());
   const [showTaskManagerModal, setShowTaskManagerModal] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
+  const [showHelpMenu, setShowHelpMenu] = useState(false);
+
+  // IPC listener for Electron Menu -> Help -> About Pivot
+  useEffect(() => {
+    if (window.electronAPI && typeof window.electronAPI.onShowAboutPivot === 'function') {
+      const unsub = window.electronAPI.onShowAboutPivot(() => {
+        setShowAboutModal(true);
+      });
+      return () => unsub();
+    }
+  }, []);
 
   // Helper for semver version comparison
   const isNewerVersion = (latest, current) => {
@@ -39,11 +56,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
 
   // Client Update States
   const [appVersion, setAppVersion] = useState(() => {
-    const stored = localStorage.getItem('hod_client_version');
-    if (stored && stored !== '1.0 Beta' && stored !== '1.0.0-beta') {
-      return stored;
-    }
-    return '2.0.1';
+    return packageJson.version;
   });
   const [targetVersion, setTargetVersion] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -61,7 +74,6 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
         .then(ver => {
           if (ver) {
             setAppVersion(ver);
-            localStorage.setItem('hod_client_version', ver);
           }
         })
         .catch(err => console.error('Failed to get app version:', err));
@@ -319,8 +331,48 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
             </p>
           </div>
 
-          {/* Right Header: Clock */}
-          <div className="flex items-center gap-6">
+          {/* Right Header: Help Menu & Clock */}
+          <div className="flex items-center gap-4">
+            {/* Help Menu Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowHelpMenu(prev => !prev)}
+                className="flex items-center gap-2 px-3.5 py-2 bg-studio-900 border border-white/5 hover:border-white/15 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition shadow-inner"
+              >
+                <HelpCircle className="h-4 w-4 text-studio-accent-purple" />
+                <span>Help</span>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+              </button>
+
+              {showHelpMenu && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setShowHelpMenu(false)} />
+                  <div className="absolute right-0 mt-2 w-48 bg-studio-900 border border-white/10 rounded-xl shadow-2xl py-1.5 z-30 animate-scale-in">
+                    <button
+                      onClick={() => {
+                        setShowHelpMenu(false);
+                        setShowAboutModal(true);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-slate-200 hover:bg-studio-800 hover:text-white transition flex items-center justify-between font-medium"
+                    >
+                      <span>About Pivot</span>
+                      <Sparkles className="h-3.5 w-3.5 text-studio-accent-purple" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowHelpMenu(false);
+                        handleCheckUpdates();
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-slate-200 hover:bg-studio-800 hover:text-white transition flex items-center justify-between border-t border-white/5 font-medium"
+                    >
+                      <span>Check for Updates</span>
+                      <RefreshCw className="h-3.5 w-3.5 text-slate-400" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Live Studio Clock */}
             <div className="flex items-center gap-2.5 px-4 py-2 bg-studio-900 border border-white/5 rounded-xl shadow-inner font-mono">
               <Clock className="h-4 w-4 text-studio-accent-purple" />
@@ -418,6 +470,67 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
               >
                 Restart & Install
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* About Pivot Dialogue Box Modal */}
+      {showAboutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-studio-950/80 backdrop-blur-md p-4 animate-fade-in pointer-events-auto">
+          {/* Backdrop click to close */}
+          <div 
+            className="absolute inset-0" 
+            onClick={() => setShowAboutModal(false)} 
+          />
+
+          <div className="relative z-10 w-full max-w-lg glass-panel-glow border border-white/10 bg-studio-900/95 p-8 rounded-2xl shadow-2xl flex flex-col justify-between min-h-[300px] overflow-hidden text-left">
+            {/* Background glow accents */}
+            <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] rounded-full bg-studio-accent-purple/10 blur-[90px] pointer-events-none" />
+            <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] rounded-full bg-studio-accent-blue/10 blur-[90px] pointer-events-none" />
+
+            {/* Close button top right */}
+            <button 
+              onClick={() => setShowAboutModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 p-2 rounded-xl transition border border-white/5 z-20"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Top Section: Top Left - Logo (image1) & Below - Version Name */}
+            <div className="space-y-2 text-left z-10">
+              <img 
+                src={pivotLogo} 
+                alt="PIVOT Workstation Monitoring" 
+                className="h-16 object-contain object-left mb-1" 
+              />
+              <p className="text-xs font-mono font-bold text-studio-accent-purple tracking-wider uppercase pl-0.5">
+                Version {appVersion}
+              </p>
+            </div>
+
+            {/* Divider */}
+            <div className="my-6 border-t border-white/10 z-10" />
+
+            {/* Bottom Row - Developed By (Bottom Left) & NAIL Logo (Right Bottom) */}
+            <div className="flex justify-between items-end z-10">
+              {/* Bottom Left - Developed By */}
+              <div className="text-left">
+                <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider block">Created & Engineered</span>
+                <p className="text-xs font-semibold text-slate-300 mt-0.5">
+                  Developed By : <span className="text-white font-bold">Sreejith Balachandran</span>
+                </p>
+              </div>
+
+              {/* Right Bottom - NAIL Logo */}
+              <div className="flex flex-col items-end">
+                <img 
+                  src={nailLogo} 
+                  alt="NAIL Logo" 
+                  className="h-9 object-contain object-right" 
+                />
+              </div>
             </div>
           </div>
         </div>

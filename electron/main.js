@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, Menu } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
@@ -199,9 +199,66 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // Setup custom application menu (removes Edit & View, adds Help -> About Pivot)
+  setupApplicationMenu();
+
   // Start the watchdog process (if running as student client in production)
   startWatchdog();
 }
+
+// Configures HOD Dashboard Menu Bar without Edit & View options
+function setupApplicationMenu() {
+  if (isStudentMode) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: app.getName(),
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        isMac ? { role: 'close' } : { role: 'quit' }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About Pivot',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('show-about-pivot');
+            }
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+ipcMain.on('open-about-pivot', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('show-about-pivot');
+  }
+});
 
 // Disable Alt+Tab and window switching keys in student kiosk mode (Windows specific hooks)
 app.whenReady().then(() => {

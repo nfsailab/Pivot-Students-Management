@@ -22,6 +22,7 @@ import {
   signOut, 
   onAuthStateChanged 
 } from 'firebase/auth';
+import packageJson from '../package.json';
 
 // ----------------------------------------------------
 // 1. Firebase configuration validation
@@ -236,8 +237,8 @@ const initLocalStorage = () => {
   }
   if (!localStorage.getItem('vfx_app_versions')) {
     localStorage.setItem('vfx_app_versions', JSON.stringify([
-      { id: 'student', version: '2.0.1', downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest' },
-      { id: 'hod', version: '2.0.1', downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest' }
+      { id: 'student', version: packageJson.version, downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest' },
+      { id: 'hod', version: packageJson.version, downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest' }
     ]));
   }
   if (!localStorage.getItem('vfx_auth_user')) {
@@ -668,11 +669,11 @@ const seedFirebaseDatabase = async () => {
     if (versionsSnap.empty) {
       console.log('🌱 Seeding default app versions to Firestore...');
       await setDoc(doc(db, 'app_versions', 'student'), {
-        version: '2.0.1',
+        version: packageJson.version,
         downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest'
       });
       await setDoc(doc(db, 'app_versions', 'hod'), {
-        version: '2.0.1',
+        version: packageJson.version,
         downloadUrl: 'https://github.com/nfsailab/Pivot-Students-Management/releases/latest'
       });
     }

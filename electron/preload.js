@@ -80,6 +80,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getVersion: () => ipcRenderer.invoke('get-app-version'),
   openExternal: (url) => ipcRenderer.send('open-external', url),
+  onShowAboutPivot: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('show-about-pivot', listener);
+    return () => ipcRenderer.removeListener('show-about-pivot', listener);
+  },
+  openAboutPivot: () => ipcRenderer.send('open-about-pivot'),
 });
 
 console.log('Preload script loaded successfully. Mode:', appMode);
