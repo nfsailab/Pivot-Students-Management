@@ -12,7 +12,9 @@ import {
   onSnapshot,
   query,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  enableIndexedDbPersistence,
+  enableMultiTabIndexedDbPersistence
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -287,9 +289,28 @@ export const subscribeCollection = (collectionName, callback) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const readCount = Math.max(1, snapshot.docChanges().length || snapshot.docs.length || 1);
       trafficTracker.recordRead(readCount, 300);
+
+      // Cache snapshot to localStorage as secondary offline fallback
+      if (data && data.length > 0) {
+        try {
+          localStorage.setItem(`vfx_cache_${collectionName}`, JSON.stringify(data));
+        } catch (e) {}
+      }
       callback(data);
     }, (error) => {
-      console.error(`Firestore subscribe error for ${collectionName}:`, error);
+      console.warn(`Firestore subscribe error/offline for ${collectionName}:`, error);
+      // Fallback to offline cached data or default dataset if offline query fails
+      const cached = localStorage.getItem(`vfx_cache_${collectionName}`) || localStorage.getItem(`vfx_${collectionName}`);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            console.log(`📦 Loaded offline fallback data for collection: ${collectionName}`);
+            callback(parsed);
+            return;
+          }
+        } catch (e) {}
+      }
       callback([]);
     });
 
@@ -328,9 +349,37 @@ export const subscribeCollection = (collectionName, callback) => {
 export const getDocument = async (collectionName, docId) => {
   trafficTracker.recordRead(1, 400);
   if (!isMockMode) {
-    const docRef = doc(db, collectionName, docId);
-    const snap = await getDoc(docRef);
-    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    try {
+      const docRef = doc(db, collectionName, docId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const docData = { id: snap.id, ...snap.data() };
+        try {
+          localStorage.setItem(`vfx_cache_${collectionName}_${docId}`, JSON.stringify(docData));
+        } catch (e) {}
+        return docData;
+      }
+    } catch (e) {
+      console.warn(`getDocument offline fallback for ${collectionName}/${docId}:`, e);
+    }
+
+    // Offline fallback lookup
+    const cachedDoc = localStorage.getItem(`vfx_cache_${collectionName}_${docId}`);
+    if (cachedDoc) {
+      try {
+        return JSON.parse(cachedDoc);
+      } catch (err) {}
+    }
+    const cachedColl = localStorage.getItem(`vfx_cache_${collectionName}`) || localStorage.getItem(`vfx_${collectionName}`);
+    if (cachedColl) {
+      try {
+        const items = JSON.parse(cachedColl || '[]');
+        if (Array.isArray(items)) {
+          return items.find(item => item.id === docId) || null;
+        }
+      } catch (err) {}
+    }
+    return null;
   } else {
     const storageKey = `vfx_${collectionName}`;
     const rawData = localStorage.getItem(storageKey);
@@ -351,12 +400,23 @@ export const subscribeDocument = (collectionName, docId, callback) => {
     const unsub = onSnapshot(docRef, (snapshot) => {
       trafficTracker.recordRead(1, 300);
       if (snapshot.exists()) {
-        callback({ id: snapshot.id, ...snapshot.data() });
+        const docData = { id: snapshot.id, ...snapshot.data() };
+        try {
+          localStorage.setItem(`vfx_cache_${collectionName}_${docId}`, JSON.stringify(docData));
+        } catch (e) {}
+        callback(docData);
       } else {
         callback(null);
       }
     }, (error) => {
-      console.error(`Firestore document subscribe error for ${collectionName}/${docId}:`, error);
+      console.warn(`Firestore document subscribe error/offline for ${collectionName}/${docId}:`, error);
+      const cached = localStorage.getItem(`vfx_cache_${collectionName}_${docId}`);
+      if (cached) {
+        try {
+          callback(JSON.parse(cached));
+          return;
+        } catch (e) {}
+      }
       callback(null);
     });
 
@@ -632,7 +692,20 @@ if (hasValidFirebaseConfig) {
     db = getFirestore(app);
     auth = getAuth(app);
     isMockMode = false;
-    console.log('🔥 Connected successfully to Firebase & Firestore!');
+
+    // Always seed local storage fallback default datasets for emergency offline usage
+    initLocalStorage();
+
+    // Enable Firestore IndexedDB offline persistence for multi-tab / electron client
+    enableMultiTabIndexedDbPersistence(db).catch((err) => {
+      if (err.code === 'failed-precondition') {
+        enableIndexedDbPersistence(db).catch((e) => console.warn('Firestore single tab offline persistence enabled:', e));
+      } else if (err.code === 'unimplemented') {
+        console.warn('Firestore offline persistence is not supported in this browser environment.');
+      }
+    });
+
+    console.log('🔥 Connected successfully to Firebase & Firestore (Offline Persistence Enabled)!');
   } catch (error) {
     console.error('Failed to initialize Firebase, falling back to Mock Mode:', error);
     isMockMode = true;
