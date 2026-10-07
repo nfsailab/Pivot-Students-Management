@@ -331,48 +331,8 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
             </p>
           </div>
 
-          {/* Right Header: Help Menu & Clock */}
-          <div className="flex items-center gap-4">
-            {/* Help Menu Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setShowHelpMenu(prev => !prev)}
-                className="flex items-center gap-2 px-3.5 py-2 bg-studio-900 border border-white/5 hover:border-white/15 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition shadow-inner"
-              >
-                <HelpCircle className="h-4 w-4 text-studio-accent-purple" />
-                <span>Help</span>
-                <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
-              </button>
-
-              {showHelpMenu && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setShowHelpMenu(false)} />
-                  <div className="absolute right-0 mt-2 w-48 bg-studio-900 border border-white/10 rounded-xl shadow-2xl py-1.5 z-30 animate-scale-in">
-                    <button
-                      onClick={() => {
-                        setShowHelpMenu(false);
-                        setShowAboutModal(true);
-                      }}
-                      className="w-full text-left px-4 py-2.5 text-xs text-slate-200 hover:bg-studio-800 hover:text-white transition flex items-center justify-between font-medium"
-                    >
-                      <span>About Pivot</span>
-                      <Sparkles className="h-3.5 w-3.5 text-studio-accent-purple" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowHelpMenu(false);
-                        handleCheckUpdates();
-                      }}
-                      className="w-full text-left px-4 py-2.5 text-xs text-slate-200 hover:bg-studio-800 hover:text-white transition flex items-center justify-between border-t border-white/5 font-medium"
-                    >
-                      <span>Check for Updates</span>
-                      <RefreshCw className="h-3.5 w-3.5 text-slate-400" />
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
+          {/* Right Header: Clock */}
+          <div className="flex items-center gap-6">
             {/* Live Studio Clock */}
             <div className="flex items-center gap-2.5 px-4 py-2 bg-studio-900 border border-white/5 rounded-xl shadow-inner font-mono">
               <Clock className="h-4 w-4 text-studio-accent-purple" />
@@ -517,8 +477,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
             <div className="flex justify-between items-end z-10">
               {/* Bottom Left - Developed By */}
               <div className="text-left">
-                <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider block">Created & Engineered</span>
-                <p className="text-xs font-semibold text-slate-300 mt-0.5">
+                <p className="text-xs font-semibold text-slate-300">
                   Developed By : <span className="text-white font-bold">Sreejith Balachandran</span>
                 </p>
               </div>
