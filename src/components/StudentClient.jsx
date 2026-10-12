@@ -82,6 +82,18 @@ function StudentClient({ onSessionStateChange }) {
   const [powerActionType, setPowerActionType] = useState('shutdown'); // 'shutdown' | 'restart'
   const [messagesList, setMessagesList] = useState([]);
   const [showShutdownModal, setShowShutdownModal] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
+
+  const handleRefreshClient = () => {
+    setIsReloading(true);
+    setTimeout(() => {
+      if (window.electronAPI && typeof window.electronAPI.reloadWindow === 'function') {
+        window.electronAPI.reloadWindow();
+      } else if (window.location && typeof window.location.reload === 'function') {
+        window.location.reload();
+      }
+    }, 150);
+  };
 
   // Helper for semver version comparison
   const isNewerVersion = (latest, current) => {
@@ -1869,8 +1881,19 @@ function StudentClient({ onSessionStateChange }) {
               <h3 className="text-xl font-bold text-white">Workstation Login</h3>
             </div>
             
-            {/* Power Control Button */}
-            <div className="flex items-center gap-2.5">
+            {/* Action Buttons: Refresh & Power */}
+            <div className="flex items-center gap-2">
+              {/* Refresh Client Button */}
+              <button
+                type="button"
+                onClick={handleRefreshClient}
+                disabled={isReloading}
+                className="h-[30px] w-[30px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/25 text-slate-400 hover:text-studio-accent-blue transition active:scale-95 flex items-center justify-center shadow-sm disabled:opacity-50"
+                title="Refresh Client"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isReloading ? 'animate-spin text-studio-accent-blue' : ''}`} />
+              </button>
+
               {/* Power Control Split Button & Dropdown */}
               <div className="relative inline-flex items-center">
                 <div className="inline-flex rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 shadow-sm transition">

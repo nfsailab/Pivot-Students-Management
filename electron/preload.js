@@ -86,6 +86,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('show-about-pivot', listener);
   },
   openAboutPivot: () => ipcRenderer.send('open-about-pivot'),
+  reloadWindow: () => ipcRenderer.send('reload-window'),
 });
 
 console.log('Preload script loaded successfully. Mode:', appMode);

@@ -350,6 +350,15 @@ ipcMain.on('open-external', (event, url) => {
   }
 });
 
+// IPC handler to reload window from React UI
+ipcMain.on('reload-window', (event) => {
+  logToFile('IPC reload-window received from UI.');
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) {
+    win.reload();
+  }
+});
+
 // IPC handler to exit application from React UI
 ipcMain.on('quit-app', () => {
   killWatchdog();

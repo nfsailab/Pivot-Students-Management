@@ -459,13 +459,13 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
             </button>
 
             {/* Top Section: Top Left - Logo (image1) & Below - Version Name */}
-            <div className="space-y-2 text-left z-10">
+            <div className="space-y-3 text-left z-10">
               <img 
                 src={pivotLogo} 
                 alt="PIVOT Workstation Monitoring" 
-                className="h-16 object-contain object-left mb-1" 
+                className="h-[88px] w-auto object-contain object-left block" 
               />
-              <p className="text-xs font-mono font-bold text-studio-accent-purple tracking-wider uppercase pl-0.5">
+              <p className="text-xs font-mono font-bold text-studio-accent-purple tracking-wider uppercase">
                 Version {appVersion}
               </p>
             </div>
