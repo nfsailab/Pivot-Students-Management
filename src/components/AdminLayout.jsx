@@ -149,6 +149,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
 
   // Listen to Firestore version updates (fallback for browser / non-packaged mode)
   useEffect(() => {
+    if (window.electronAPI) return;
     const unsubscribe = subscribeCollection('app_versions', (versions) => {
       const hodConfig = versions.find(v => v.id === 'hod');
       if (hodConfig && hodConfig.version) {
@@ -188,7 +189,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
       setIsUpdating(true);
       setUpdateStatus('DOWNLOADING...');
       setUpdateProgress(0);
-      window.electronAPI.startUpdateDownload(downloadUrl);
+      window.electronAPI.startUpdateDownload();
     } else if (downloadUrl && !downloadUrl.includes('your_hod_folder_id')) {
       window.open(downloadUrl, '_blank');
     } else {
@@ -388,7 +389,7 @@ function AdminLayout({ activeTab, setActiveTab, user, onLogout, children }) {
               <RefreshCw className="h-6 w-6 text-studio-accent-purple animate-spin" />
             </div>
             <h3 className="text-sm font-bold text-white tracking-wide uppercase">{updateStatus}</h3>
-            {updateStatus.includes('Downloading') && (
+            {updateStatus.toUpperCase().includes('DOWNLOADING') && (
               <div className="w-full space-y-2">
                 <div className="w-full bg-studio-900 rounded-full h-2 overflow-hidden border border-white/5">
                   <div 

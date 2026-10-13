@@ -21,10 +21,53 @@ import ModeSettingsTab from './components/ModeSettingsTab';
 import MonitoringGrid from './components/MonitoringGrid';
 import StudentClient from './components/StudentClient';
 
+class TabErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error(`TabErrorBoundary caught an error in ${this.props.tabName || 'tab'}:`, error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 bg-rose-950/20 border border-rose-500/30 rounded-2xl text-rose-200 space-y-4">
+          <div className="flex items-center gap-3 text-rose-400">
+            <AlertTriangle className="h-6 w-6 shrink-0" />
+            <h3 className="text-base font-bold">Error loading {this.props.tabName || 'this page'}</h3>
+          </div>
+          <p className="text-xs text-rose-300 font-mono bg-black/40 p-4 rounded-xl border border-rose-500/20">
+            {this.state.error?.message || String(this.state.error)}
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow"
+          >
+            Retry Loading
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   // Navigation & View States
-  const [currentView, setCurrentView] = useState('welcome'); // welcome, admin, student, notification
-  const [activeTab, setActiveTab] = useState('global'); // monitoring, global, mode-settings
+  const [currentView, setCurrentView] = useState(() => {
+    if (window.electronAPI && typeof window.electronAPI.getAppMode === 'function') {
+      const mode = window.electronAPI.getAppMode();
+      if (mode === 'student' || mode === 'admin' || mode === 'notification') {
+        return mode;
+      }
+    }
+    return 'welcome';
+  }); // welcome, admin, student, notification
+  const [activeTab, setActiveTab] = useState('monitoring'); // monitoring, global, mode-settings
   const [adminUser, setAdminUser] = useState(null);
   const [notificationMsg, setNotificationMsg] = useState(null);
 
@@ -53,6 +96,9 @@ function App() {
             setNotificationMsg(data);
           });
         }
+        return () => {
+          cleanupNotification();
+        };
       }
     }
 
@@ -63,7 +109,12 @@ function App() {
 
     // Subscriptions for basic dashboard stats
     const unsubComps = subscribeCollection('computers', (comps) => {
-      setComputersCount(comps.length);
+      const uniqueMap = new Map();
+      (comps || []).forEach(c => {
+        const k = (c.name || c.id || '').trim();
+        if (k) uniqueMap.set(k, c);
+      });
+      setComputersCount(uniqueMap.size);
       const activeCount = comps.filter(c => c.status === 'online').length;
       setStudentsCount(activeCount);
       setLoading(false);
@@ -148,13 +199,25 @@ function App() {
               onLogout={() => setAdminUser(null)}
             >
               {/* Tab: Real-time Monitor Grid */}
-              {activeTab === 'monitoring' && <MonitoringGrid />}
+              {activeTab === 'monitoring' && (
+                <TabErrorBoundary tabName="Monitor Grid">
+                  <MonitoringGrid />
+                </TabErrorBoundary>
+              )}
 
               {/* Tab: Global Configuration Settings */}
-              {activeTab === 'global' && <GlobalSettingsTab />}
+              {activeTab === 'global' && (
+                <TabErrorBoundary tabName="Global Settings">
+                  <GlobalSettingsTab />
+                </TabErrorBoundary>
+              )}
 
               {/* Tab: Mode Parameters Config */}
-              {activeTab === 'mode-settings' && <ModeSettingsTab />}
+              {activeTab === 'mode-settings' && (
+                <TabErrorBoundary tabName="Mode Settings">
+                  <ModeSettingsTab />
+                </TabErrorBoundary>
+              )}
             </AdminLayout>
           )}
         </div>

@@ -31,9 +31,31 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 let isSessionActive = false;
 let allowAppQuit = false;
 
+// Enforce single instance lock so a second client window can never open concurrently
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', () => {
+  logToFile('Second application instance prevented. Focusing existing mainWindow.');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized() && !isStudentMode) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    if (isStudentMode) {
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    }
+  }
+});
+
 // Spawns the watchdog.exe process in student production mode
 function startWatchdog() {
-  if (!isStudentMode || isDev) return;
+  if (!isStudentMode || isDev || allowAppQuit) return;
+  if (watchdogProcess) return;
   
   const watchdogPath = path.join(__dirname, 'watchdog.exe').replace('app.asar', 'app.asar.unpacked');
   const clientPath = app.getPath('exe');
@@ -87,8 +109,8 @@ function killWatchdog() {
   }
   if (process.platform === 'win32') {
     try {
-      const { exec } = require('child_process');
-      exec('taskkill /F /IM watchdog.exe /T', () => {});
+      const { execSync } = require('child_process');
+      execSync('taskkill /F /IM watchdog.exe /T', { stdio: 'ignore' });
     } catch (e) {}
   }
 }
@@ -133,6 +155,11 @@ function emergencyQuitApp() {
 }
 
 function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.focus();
+    return;
+  }
+
   console.log(`App Name: ${app.getName()} (${appName})`);
   console.log(`Launching in ${isStudentMode ? 'STUDENT' : 'ADMIN'} mode. Dev environment: ${isDev}`);
 
@@ -676,6 +703,100 @@ function sendToWindows(channel, data) {
 
 let isCheckingUpdate = false;
 let suppressErrorEvent = false;
+let isAutoUpdaterReady = false;
+let pendingDirectAssetUrl = null;
+let pendingDirectVersion = '';
+let downloadedInstallerPath = null;
+
+function findMatchingReleaseAsset(releaseData) {
+  const assetModeStr = isStudentMode ? 'student' : 'hod';
+  const assets = (releaseData && releaseData.assets) ? releaseData.assets : [];
+  return (
+    assets.find(a =>
+      a.name.toLowerCase().includes(assetModeStr) &&
+      a.name.toLowerCase().includes('setup') &&
+      a.name.toLowerCase().endsWith('.exe')
+    ) ||
+    assets.find(a =>
+      a.name.toLowerCase().includes(assetModeStr) &&
+      a.name.toLowerCase().endsWith('.exe')
+    ) ||
+    assets.find(a => a.name.toLowerCase().endsWith('.exe'))
+  );
+}
+
+function downloadInstallerDirectly(downloadUrl, versionStr) {
+  return new Promise((resolve, reject) => {
+    const safeVer = (versionStr || 'latest').replace(/[^a-zA-Z0-9._-]/g, '');
+    const modeTag = isStudentMode ? 'student' : 'hod';
+    const destPath = path.join(app.getPath('temp'), `pivot-${modeTag}-update-${safeVer}.exe`);
+
+    logToFile(`Starting direct in-app installer download from: ${downloadUrl} -> ${destPath}`);
+    sendToWindows('update-progress', { percent: 0 });
+
+    const followRedirectAndDownload = (targetUrl, redirectCount = 0) => {
+      if (redirectCount > 5) {
+        reject(new Error('Too many redirects while downloading update.'));
+        return;
+      }
+
+      https.get(targetUrl, { headers: { 'User-Agent': 'VFX-Lab-Pilot-Updater' } }, (res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          res.resume();
+          followRedirectAndDownload(res.headers.location, redirectCount + 1);
+          return;
+        }
+
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`Installer download failed with HTTP ${res.statusCode}`));
+          return;
+        }
+
+        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+        let receivedBytes = 0;
+        let lastReportedPercent = -1;
+
+        const fileStream = fs.createWriteStream(destPath);
+
+        res.on('data', (chunk) => {
+          receivedBytes += chunk.length;
+          if (totalBytes > 0) {
+            const percent = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+            if (percent !== lastReportedPercent) {
+              lastReportedPercent = percent;
+              sendToWindows('update-progress', { percent });
+            }
+          }
+        });
+
+        res.pipe(fileStream);
+
+        fileStream.on('finish', () => {
+          fileStream.close(() => {
+            logToFile(`Direct installer download completed: ${destPath}`);
+            downloadedInstallerPath = destPath;
+            sendToWindows('update-progress', { percent: 100 });
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.setAlwaysOnTop(false);
+            }
+            sendToWindows('update-downloaded', { version: versionStr || '' });
+            resolve(destPath);
+          });
+        });
+
+        fileStream.on('error', (err) => {
+          fs.unlink(destPath, () => {});
+          reject(err);
+        });
+      }).on('error', (err) => {
+        reject(err);
+      });
+    };
+
+    followRedirectAndDownload(downloadUrl);
+  });
+}
 
 autoUpdater.on('checking-for-update', () => {
   logToFile('AutoUpdater: checking-for-update');
@@ -684,6 +805,8 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   logToFile(`AutoUpdater: update-available v${info.version}`);
+  isAutoUpdaterReady = true;
+  downloadedInstallerPath = null;
   sendToWindows('update-available', info);
 });
 
@@ -725,6 +848,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   logToFile(`AutoUpdater: update-downloaded v${info.version}`);
+  downloadedInstallerPath = null;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setAlwaysOnTop(false);
   }
@@ -744,21 +868,26 @@ async function performMultiProviderUpdateCheck() {
 
   isCheckingUpdate = true;
   suppressErrorEvent = true;
+  isAutoUpdaterReady = false;
   sendToWindows('update-status', { status: 'checking', text: 'Checking for updates...' });
+
+  const targetChannel = isStudentMode ? 'student' : 'hod';
 
   // Tier 1: Try autoUpdater with specific channel (student or hod)
   try {
-    logToFile('Tier 1: Attempting update check via GitHub Releases (channel)...');
+    logToFile(`Tier 1: Attempting update check via GitHub Releases (channel: ${targetChannel})...`);
     autoUpdater.allowPrerelease = false;
-    autoUpdater.channel = isStudentMode ? 'student' : 'hod';
     autoUpdater.setFeedURL({
       provider: 'github',
       owner: 'nfsailab',
-      repo: 'Pivot-Students-Management'
+      repo: 'Pivot-Students-Management',
+      channel: targetChannel
     });
+    autoUpdater.channel = targetChannel;
 
     const result = await autoUpdater.checkForUpdates();
     if (result && result.updateInfo) {
+      isAutoUpdaterReady = true;
       suppressErrorEvent = false;
       isCheckingUpdate = false;
       return;
@@ -770,9 +899,16 @@ async function performMultiProviderUpdateCheck() {
   // Tier 2: Fallback to default channel (latest.yml)
   try {
     logToFile('Tier 2: Fallback update check via GitHub Releases (latest.yml)...');
-    autoUpdater.channel = null;
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: 'nfsailab',
+      repo: 'Pivot-Students-Management',
+      channel: 'latest'
+    });
+    autoUpdater.channel = 'latest';
     const result = await autoUpdater.checkForUpdates();
     if (result && result.updateInfo) {
+      isAutoUpdaterReady = true;
       suppressErrorEvent = false;
       isCheckingUpdate = false;
       return;
@@ -793,18 +929,15 @@ async function performMultiProviderUpdateCheck() {
       logToFile(`GitHub REST API latest version: ${latestVer}, current app version: ${currentVer}`);
 
       if (isNewerVersionStr(latestVer, currentVer)) {
-        const assetModeStr = isStudentMode ? 'student' : 'hod';
-        const matchingAsset = (releaseData.assets || []).find(a => 
-          a.name.toLowerCase().includes(assetModeStr) || a.name.toLowerCase().endsWith('.exe')
-        );
-
-        const downloadUrl = matchingAsset ? matchingAsset.browser_download_url : releaseData.html_url;
+        const matchingAsset = findMatchingReleaseAsset(releaseData);
+        pendingDirectAssetUrl = matchingAsset ? matchingAsset.browser_download_url : null;
+        pendingDirectVersion = latestVer.replace(/^v/i, '');
+        isAutoUpdaterReady = false;
 
         sendToWindows('update-available', {
-          version: latestVer.replace(/^v/i, ''),
+          version: pendingDirectVersion,
           releaseName: releaseData.name || latestVer,
-          releaseNotes: releaseData.body || 'New version available.',
-          downloadUrl: downloadUrl
+          releaseNotes: releaseData.body || 'New version available.'
         });
         isCheckingUpdate = false;
         return;
@@ -820,7 +953,7 @@ async function performMultiProviderUpdateCheck() {
 
   isCheckingUpdate = false;
   sendToWindows('update-error', { 
-    message: 'Could not fetch release from GitHub.\n\nPlease verify that:\n1. Your internet connection is active.\n2. GitHub Repository visibility is set to Public.\n3. A published GitHub Release higher than version 2.0.0 exists.' 
+    message: 'Could not fetch release from GitHub.\n\nPlease verify that:\n1. Your internet connection is active.\n2. GitHub Repository visibility is set to Public.\n3. A published GitHub Release higher than current version exists.' 
   });
 }
 
@@ -834,25 +967,54 @@ ipcMain.on('check-for-updates', () => {
   });
 });
 
-ipcMain.on('start-update-download', (event, customUrl) => {
-  logToFile(`IPC start-update-download triggered. Custom URL: ${customUrl || 'none'}`);
+ipcMain.on('start-update-download', async () => {
+  logToFile(`IPC start-update-download triggered. isAutoUpdaterReady=${isAutoUpdaterReady}`);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setAlwaysOnTop(false);
   }
-  if (customUrl && typeof customUrl === 'string' && customUrl.startsWith('http')) {
-    require('electron').shell.openExternal(customUrl);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.minimize();
+
+  // First try native electron-updater if Tier 1 or Tier 2 check succeeded
+  if (isAutoUpdaterReady) {
+    try {
+      suppressErrorEvent = true;
+      await autoUpdater.downloadUpdate();
+      suppressErrorEvent = false;
+      return;
+    } catch (err) {
+      suppressErrorEvent = false;
+      logToFile(`autoUpdater.downloadUpdate failed (${err.message}), falling back to direct in-app installer download...`);
     }
-    return;
   }
-  autoUpdater.downloadUpdate().catch(err => {
-    logToFile(`downloadUpdate catch: ${err.message}`);
-    require('electron').shell.openExternal('https://github.com/nfsailab/Pivot-Students-Management/releases/latest');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.minimize();
+
+  // Fallback: Direct in-app binary download from GitHub release assets (never opens external browser)
+  try {
+    let targetAssetUrl = pendingDirectAssetUrl;
+    let targetVer = pendingDirectVersion;
+
+    if (!targetAssetUrl) {
+      const releaseData = await fetchGitHubLatestReleaseData();
+      if (releaseData) {
+        const matchingAsset = findMatchingReleaseAsset(releaseData);
+        if (matchingAsset) {
+          targetAssetUrl = matchingAsset.browser_download_url;
+        }
+        if (releaseData.tag_name) {
+          targetVer = releaseData.tag_name.replace(/^v/i, '');
+        }
+      }
     }
-  });
+
+    if (!targetAssetUrl) {
+      throw new Error('Could not locate installer executable (.exe) in the latest GitHub release.');
+    }
+
+    await downloadInstallerDirectly(targetAssetUrl, targetVer);
+  } catch (fallbackErr) {
+    logToFile(`Direct installer download fallback failed: ${fallbackErr.message}`);
+    sendToWindows('update-error', {
+      message: `Update download failed: ${fallbackErr.message || 'Unable to download installer.'}\nPlease check your internet connection and try again.`
+    });
+  }
 });
 
 ipcMain.on('install-update', () => {
@@ -863,5 +1025,21 @@ ipcMain.on('install-update', () => {
     mainWindow.setClosable(true);
     mainWindow.hide();
   }
+
+  if (downloadedInstallerPath && fs.existsSync(downloadedInstallerPath)) {
+    logToFile(`Launching directly downloaded installer: ${downloadedInstallerPath}`);
+    try {
+      const child = spawn(downloadedInstallerPath, [], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.unref();
+    } catch (err) {
+      logToFile(`Failed to launch downloaded installer: ${err.message}`);
+    }
+    app.quit();
+    return;
+  }
+
   autoUpdater.quitAndInstall(false, true);
 });

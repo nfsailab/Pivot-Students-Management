@@ -46,7 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('emergency-exit-cleanup', listener);
   },
   checkForUpdates: () => ipcRenderer.send('check-for-updates'),
-  startUpdateDownload: () => ipcRenderer.send('start-update-download'),
+  startUpdateDownload: (url) => ipcRenderer.send('start-update-download', url),
   installUpdate: () => ipcRenderer.send('install-update'),
   onUpdateStatus: (callback) => {
     const listener = (_, data) => callback(data);

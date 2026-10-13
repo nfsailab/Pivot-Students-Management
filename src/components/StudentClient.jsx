@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import nailLogo from '../nail-logo.png';
+import pivotLogo from '../pivot-logo.png';
 import packageJson from '../../package.json';
 import { 
   subscribeCollection, 
@@ -83,6 +84,17 @@ function StudentClient({ onSessionStateChange }) {
   const [messagesList, setMessagesList] = useState([]);
   const [showShutdownModal, setShowShutdownModal] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
+
+  // IPC listener for Help / About Pivot
+  useEffect(() => {
+    if (window.electronAPI && typeof window.electronAPI.onShowAboutPivot === 'function') {
+      const unsub = window.electronAPI.onShowAboutPivot(() => {
+        setShowAboutModal(true);
+      });
+      return () => unsub();
+    }
+  }, []);
 
   const handleRefreshClient = () => {
     setIsReloading(true);
@@ -204,6 +216,7 @@ function StudentClient({ onSessionStateChange }) {
 
   // Listen to Firestore version updates (fallback for browser / non-packaged mode)
   useEffect(() => {
+    if (window.electronAPI) return;
     const unsubscribe = subscribeCollection('app_versions', (versions) => {
       const studentConfig = versions.find(v => v.id === 'student');
       if (studentConfig && studentConfig.version) {
@@ -220,7 +233,7 @@ function StudentClient({ onSessionStateChange }) {
   // Local Alerts & Timing States
   const [sessionEndTime, setSessionEndTime] = useState(null);
   const [localAlert, setLocalAlert] = useState(null);
-  const [syncIntervalMs, setSyncIntervalMs] = useState(30000); // Default Eco 30s
+  const [syncIntervalMs, setSyncIntervalMs] = useState(15000); // Default 15s to guarantee watchdog headroom
   const [autoThrottle, setAutoThrottle] = useState(true);
 
   useEffect(() => {
@@ -297,8 +310,30 @@ function StudentClient({ onSessionStateChange }) {
     });
 
     const unsubWorkstations = subscribeCollection('computers', (data) => {
-      const list = (data || []).map(w => ({ ...w, name: w.name || w.id }));
-      const sorted = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+      const map = new Map();
+      (data || []).forEach(w => {
+        const displayName = (w.name || w.id || '').trim();
+        if (!displayName) return;
+
+        if (map.has(displayName)) {
+          const existing = map.get(displayName);
+          map.set(displayName, {
+            ...w,
+            ...existing,
+            gpu: existing.gpu || w.gpu || '',
+            vram: existing.vram || w.vram || '',
+            ram: existing.ram || w.ram || '',
+            processor: existing.processor || w.processor || '',
+            name: displayName
+          });
+        } else {
+          map.set(displayName, { ...w, name: displayName });
+        }
+      });
+
+      const sorted = Array.from(map.values()).sort((a, b) => 
+        (a.name || '').localeCompare(b.name || '', undefined, { numeric: true })
+      );
       setWorkstationsList(sorted);
     });
 
@@ -315,16 +350,16 @@ function StudentClient({ onSessionStateChange }) {
   }, []);
 
   // Listen to the selected/active computer document in real-time (reduces reads by 96%)
+  const activePcId = activeSession ? activeSession.computerId : selectedPC;
   useEffect(() => {
     let unsubComp = null;
-    const pcId = activeSession ? activeSession.computerId : selectedPC;
-    if (pcId) {
-      unsubComp = subscribeDocument('computers', pcId, (docData) => {
+    if (activePcId) {
+      unsubComp = subscribeDocument('computers', activePcId, (docData) => {
         setComputers(docData ? [docData] : []);
       });
     }
     return () => unsubComp && unsubComp();
-  }, [selectedPC, activeSession]);
+  }, [activePcId]);
 
   // 2. Cascade Filter: Student list filters automatically based on selected Batch
   const filteredStudents = students.filter(s => s.batch === selectedBatch);
@@ -465,28 +500,48 @@ function StudentClient({ onSessionStateChange }) {
 
       sendHeartbeat();
 
-      // Calculate effective sync interval (Auto-throttle if active PCs >= 15)
-      const onlineCount = onlineCountRef.current;
-      let effectiveInterval = syncIntervalMs;
-      if (autoThrottle && onlineCount >= 15) {
-        effectiveInterval = Math.max(effectiveInterval, 30000); // Force Eco 30s+ under high lab load
-      }
+      // Cap effective sync interval at 15s so heartbeat always arrives well inside any dashboard watchdog
+      const effectiveInterval = Math.min(syncIntervalMs, 15000);
 
       heartbeatInterval = setInterval(sendHeartbeat, effectiveInterval);
     }
     return () => {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
     };
-  }, [activeSession, syncIntervalMs, autoThrottle]);
+  }, [activeSession, syncIntervalMs]);
 
   // 4. Remote Logout Listener (HOD Override Reset)
   useEffect(() => {
     if (!activeSession) return;
 
-    // Listen to computers. If our current PC status changes to offline remotely, trigger logout.
+    // 5-second login grace period to prevent stale pre-login snapshots from triggering immediate logout
+    if (activeSession.startTime) {
+      const sessionAgeMs = Date.now() - new Date(activeSession.startTime).getTime();
+      if (!isNaN(sessionAgeMs) && sessionAgeMs >= 0 && sessionAgeMs < 5000) {
+        return;
+      }
+    }
+
+    // Listen to computers. If our current PC status changes to offline remotely, check reason.
     const currentPcStatus = computers.find(c => c.id === activeSession.computerId);
     if (currentPcStatus && currentPcStatus.status === 'offline' && currentPcStatus.currentUser === null) {
-      handleLogout(true);
+      // ONLY log out if the HOD deliberately performed an administrative reset ("Reset by HOD")
+      if (currentPcStatus.lastLogoutStatus === 'Reset by HOD') {
+        handleLogout(true);
+        return;
+      }
+
+      // If marked offline by watchdog timeout, network flicker, or stale cache while client is alive, re-assert online state
+      updateDocument('computers', activeSession.computerId, {
+        status: 'online',
+        currentUser: activeSession.studentName,
+        currentBatch: activeSession.studentBatch,
+        currentMode: activeSession.mode,
+        currentTask: activeSession.taskDesc,
+        startTime: activeSession.startTime,
+        lastActive: new Date().toISOString(),
+        lastLogoutStatus: null
+      }).catch(err => console.error('Failed to re-assert online status:', err));
     }
   }, [computers, activeSession]);
 
@@ -762,8 +817,10 @@ function StudentClient({ onSessionStateChange }) {
       const target = new Date();
       target.setHours(hours, minutes, 0, 0);
 
-      if (target.getTime() < Date.now() - 12 * 60 * 60 * 1000) {
-        target.setDate(target.getDate() + 1);
+      // If the scheduled slot end time has already elapsed today, do not set an expired
+      // target (which would trigger an immediate 0-second force-logout alert on login).
+      if (target.getTime() <= Date.now()) {
+        return null;
       }
       return target;
     } catch (e) {
@@ -801,7 +858,7 @@ function StudentClient({ onSessionStateChange }) {
       setIsUpdating(true);
       setUpdateStatus('DOWNLOADING...');
       setUpdateProgress(0);
-      window.electronAPI.startUpdateDownload(downloadUrl);
+      window.electronAPI.startUpdateDownload();
     } else if (downloadUrl && !downloadUrl.includes('your_student_folder_id')) {
       window.open(downloadUrl, '_blank');
     } else {
@@ -852,12 +909,12 @@ function StudentClient({ onSessionStateChange }) {
       // Must have an active current user to be considered occupied
       if (!c.currentUser || !c.currentUser.trim()) return false;
 
-      // Self-healing check: If PC has been inactive for > 45s (stale lock from forced shutdown/power off)
+      // Self-healing check: If PC has been inactive for > 120s (stale lock from forced shutdown/power off)
       if (c.lastActive) {
         const lastActiveMs = new Date(c.lastActive).getTime();
         if (!isNaN(lastActiveMs)) {
           const elapsedSecs = (Date.now() - lastActiveMs) / 1000;
-          if (elapsedSecs > 45) {
+          if (elapsedSecs > 120) {
             console.warn(`Self-healing: Overriding stale shutdown lock on ${c.id} (inactive for ${Math.floor(elapsedSecs)}s).`);
             return false; // Treat as vacant
           }
@@ -894,8 +951,7 @@ function StudentClient({ onSessionStateChange }) {
     };
 
     try {
-      // 1. Update computer status to Online in Firestore
-      await updateDocument('computers', selectedPC, {
+      const onlinePayload = {
         status: 'online',
         currentUser: selectedStudent,
         currentBatch: selectedBatch,
@@ -903,8 +959,15 @@ function StudentClient({ onSessionStateChange }) {
         currentTask: sessionTaskDesc,
         startTime: sessionData.startTime,
         lastActive: new Date().toISOString(),
+        lastLogoutStatus: null,
         message: null
-      });
+      };
+
+      // Optimistically update local computer state before activating session so stale offline state never triggers reset
+      setComputers([{ id: selectedPC, ...onlinePayload }]);
+
+      // 1. Update computer status to Online in Firestore
+      await updateDocument('computers', selectedPC, onlinePayload);
 
       // 2. Clear notices and enter locking screen
       setAdminResetNotice(false);
@@ -2098,9 +2161,19 @@ function StudentClient({ onSessionStateChange }) {
               Initialize Session & Start Lab Work
             </button>
 
-            {/* Version, Logo, and Update Option */}
+            {/* Version, Help, Logo, and Update Option */}
             <div className="flex justify-between items-center pt-3 text-[10px] text-slate-500 font-medium">
-              <span>Version: {appVersion}</span>
+              <div className="flex items-center gap-1.5">
+                <span>Version: {appVersion}</span>
+                <span className="text-slate-600">•</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAboutModal(true)}
+                  className="text-slate-400 hover:text-white hover:underline transition cursor-pointer font-semibold"
+                >
+                  Help
+                </button>
+              </div>
               <img src={nailLogo} alt="PIVOT Logo" className="h-4 object-contain drop-shadow-sm hover:scale-105 transition duration-300" />
               <button
                 type="button"
@@ -2261,6 +2334,66 @@ function StudentClient({ onSessionStateChange }) {
                 {powerActionType === 'restart' ? <RefreshCw className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
                 {powerActionType === 'restart' ? 'Restart Now' : 'Shut Down Now'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* About Pivot / Help Dialogue Box Modal */}
+      {showAboutModal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-studio-950/80 backdrop-blur-md p-4 animate-fade-in pointer-events-auto">
+          {/* Backdrop click to close */}
+          <div 
+            className="absolute inset-0" 
+            onClick={() => setShowAboutModal(false)} 
+          />
+
+          <div className="relative z-10 w-full max-w-lg glass-panel-glow border border-white/10 bg-studio-900/95 p-8 rounded-2xl shadow-2xl flex flex-col justify-between min-h-[300px] overflow-hidden text-left">
+            {/* Background glow accents */}
+            <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] rounded-full bg-studio-accent-purple/10 blur-[90px] pointer-events-none" />
+            <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] rounded-full bg-studio-accent-blue/10 blur-[90px] pointer-events-none" />
+
+            {/* Close button top right */}
+            <button 
+              onClick={() => setShowAboutModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 p-2 rounded-xl transition border border-white/5 z-20 cursor-pointer"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Top Section: Top Left - Logo & Below - Version Name */}
+            <div className="space-y-3 text-left z-10">
+              <img 
+                src={pivotLogo} 
+                alt="PIVOT Workstation Monitoring" 
+                className="h-[88px] w-auto object-contain object-left block" 
+              />
+              <p className="text-xs font-mono font-bold text-studio-accent-purple tracking-wider uppercase">
+                Version {appVersion}
+              </p>
+            </div>
+
+            {/* Divider */}
+            <div className="my-6 border-t border-white/10 z-10" />
+
+            {/* Bottom Row - Developed By (Bottom Left) & NAIL Logo (Right Bottom) */}
+            <div className="flex justify-between items-end z-10">
+              {/* Bottom Left - Developed By */}
+              <div className="text-left">
+                <p className="text-xs font-semibold text-slate-300">
+                  Developed By : <span className="text-white font-bold">Sreejith Balachandran</span>
+                </p>
+              </div>
+
+              {/* Right Bottom - NAIL Logo */}
+              <div className="flex flex-col items-end">
+                <img 
+                  src={nailLogo} 
+                  alt="NAIL Logo" 
+                  className="h-9 object-contain object-right" 
+                />
+              </div>
             </div>
           </div>
         </div>

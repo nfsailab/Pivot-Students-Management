@@ -148,40 +148,18 @@ const DEFAULT_SETTINGS_GENAI = [
   }
 ];
 
-// Generate default computers grid (PC-01 to PC-25)
+// Generate default computers grid (VFX-01 to VFX-20)
 const generateDefaultComputers = () => {
   const comps = [];
-  for (let i = 1; i <= 25; i++) {
-    const pcId = `PC-${String(i).padStart(2, '0')}`;
-    // Simulate some active and some idle computers to look dynamic out of the box
-    let status = 'offline';
-    let currentUser = null;
-    let currentMode = null;
-    let currentTask = null;
-    
-    if (i === 3) {
-      status = 'online';
-      currentUser = 'Alex Mercer';
-      currentMode = 'Academic';
-      currentTask = 'Practicing Houdini Pyro simulations';
-    } else if (i === 8) {
-      status = 'online';
-      currentUser = 'Bruce Wayne';
-      currentMode = 'Production';
-      currentTask = 'Rendering cyberpunk assets';
-    } else if (i === 15) {
-      status = 'online';
-      currentUser = 'Tony Stark';
-      currentMode = 'Research';
-      currentTask = 'Writing report on AI rendering pipelines';
-    }
-
+  for (let i = 1; i <= 20; i++) {
+    const pcId = `VFX-${String(i).padStart(2, '0')}`;
     comps.push({
       id: pcId,
-      status,
-      currentUser,
-      currentMode,
-      currentTask,
+      name: pcId,
+      status: 'offline',
+      currentUser: null,
+      currentMode: null,
+      currentTask: null,
       lastActive: new Date().toISOString(),
       message: null
     });

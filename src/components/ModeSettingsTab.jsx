@@ -602,7 +602,13 @@ function ModeSettingsTab() {
       checkAllLoaded();
     });
 
+    // Safety fallback: ensure loading never hangs if Firestore listener is delayed
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 2000);
+
     return () => {
+      clearTimeout(safetyTimer);
       unsubBatches();
       unsubAcademic();
       unsubProduction();

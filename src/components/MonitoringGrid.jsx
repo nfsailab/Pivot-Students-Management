@@ -127,7 +127,17 @@ function MonitoringGrid() {
   // Subscriptions
   useEffect(() => {
     const unsubComps = subscribeCollection('computers', (data) => {
-      const sorted = [...data].sort((a, b) => a.id.localeCompare(b.id));
+      const map = new Map();
+      (data || []).forEach(w => {
+        const key = (w.name || w.id || '').trim();
+        if (!key) return;
+        if (!map.has(key) || (w.status === 'online' && map.get(key).status !== 'online')) {
+          map.set(key, { ...w, id: key, name: key });
+        }
+      });
+      const sorted = Array.from(map.values()).sort((a, b) => 
+        (a.id || '').localeCompare(b.id || '', undefined, { numeric: true })
+      );
       setComputers(sorted);
     });
 
@@ -162,19 +172,48 @@ function MonitoringGrid() {
 
   const computersRef = useRef([]);
   const studentsListRef = useRef([]);
-  useEffect(() => { computersRef.current = computers; }, [computers]);
+  const heartbeatTrackerRef = useRef({});
+
+  useEffect(() => {
+    const now = Date.now();
+    (computers || []).forEach((pc) => {
+      if (pc.status === 'online' && pc.lastActive) {
+        const prev = heartbeatTrackerRef.current[pc.id];
+        if (!prev || prev.lastActive !== pc.lastActive) {
+          heartbeatTrackerRef.current[pc.id] = {
+            lastActive: pc.lastActive,
+            seenAt: now
+          };
+        }
+      } else {
+        delete heartbeatTrackerRef.current[pc.id];
+      }
+    });
+    computersRef.current = computers;
+  }, [computers]);
+
   useEffect(() => { studentsListRef.current = studentsList; }, [studentsList]);
 
-  // Watchdog: detect if any computer marked online has stopped sending heartbeats (>45 seconds)
+  // Watchdog: detect if any computer marked online has stopped sending heartbeats (>120 seconds)
   useEffect(() => {
     const watchdog = setInterval(() => {
       const currentComps = computersRef.current || [];
       const currentStudents = studentsListRef.current || [];
+      const now = Date.now();
+
       currentComps.forEach(async (pc) => {
         if (pc.status === 'online' && pc.lastActive) {
-          const elapsedSecs = (Date.now() - new Date(pc.lastActive).getTime()) / 1000;
-          if (elapsedSecs > 45) {
-            console.warn(`Watchdog detected forced shutdown or offline on ${pc.id}. Last active ${Math.floor(elapsedSecs)}s ago.`);
+          const tracked = heartbeatTrackerRef.current[pc.id];
+          // Measure time since last heartbeat change using local clock (immune to clock skew between PCs)
+          const localInactiveSecs = tracked ? (now - tracked.seenAt) / 1000 : 0;
+          const rawElapsedSecs = (now - new Date(pc.lastActive).getTime()) / 1000;
+          // Trigger only if no heartbeat update received for >120s (or >300s raw on initial dashboard boot)
+          const isStale = localInactiveSecs > 120 || (!tracked && rawElapsedSecs > 300);
+
+          if (isStale) {
+            const reportedSecs = Math.max(Math.floor(localInactiveSecs), Math.floor(rawElapsedSecs));
+            console.warn(`Watchdog detected forced shutdown or offline on ${pc.id}. Last active ${reportedSecs}s ago.`);
+            delete heartbeatTrackerRef.current[pc.id];
             try {
               const startMs = pc.startTime ? new Date(pc.startTime).getTime() : new Date(pc.lastActive).getTime();
               const endMs = new Date(pc.lastActive).getTime();
@@ -231,6 +270,7 @@ function MonitoringGrid() {
       try {
         await updateDocument('computers', pcId, {
           status: 'offline',
+          lastLogoutStatus: 'Reset by HOD',
           currentUser: null,
           currentMode: null,
           currentTask: null,
@@ -253,6 +293,7 @@ function MonitoringGrid() {
           if (pc.status === 'online' || pc.currentUser) {
             await updateDocument('computers', pc.id, {
               status: 'offline',
+              lastLogoutStatus: 'Reset by HOD',
               currentUser: null,
               currentMode: null,
               currentTask: null,
@@ -288,19 +329,20 @@ function MonitoringGrid() {
   };
 
   // Occupancy metrics
-  const totalPCs = computers.length;
-  const activeCount = computers.filter(c => c.status === 'online').length;
-  const idleCount = totalPCs - activeCount;
+  const totalPCs = (computers || []).length;
+  const activeCount = (computers || []).filter(c => c && c.status === 'online').length;
+  const idleCount = Math.max(0, totalPCs - activeCount);
   
-  const academicCount = computers.filter(c => c.status === 'online' && c.currentMode?.toLowerCase() === 'academic').length;
-  const productionCount = computers.filter(c => c.status === 'online' && c.currentMode?.toLowerCase() === 'production').length;
-  const researchCount = computers.filter(c => c.status === 'online' && c.currentMode?.toLowerCase() === 'research').length;
-  const genaiCount = computers.filter(c => c.status === 'online' && (c.currentMode?.toLowerCase().includes('genai') || c.currentMode?.toLowerCase().includes('nail'))).length;
+  const academicCount = (computers || []).filter(c => c && c.status === 'online' && c.currentMode?.toLowerCase() === 'academic').length;
+  const productionCount = (computers || []).filter(c => c && c.status === 'online' && c.currentMode?.toLowerCase() === 'production').length;
+  const researchCount = (computers || []).filter(c => c && c.status === 'online' && c.currentMode?.toLowerCase() === 'research').length;
+  const genaiCount = (computers || []).filter(c => c && c.status === 'online' && (c.currentMode?.toLowerCase()?.includes('genai') || c.currentMode?.toLowerCase()?.includes('nail'))).length;
 
   // Filter & Search logic
-  const filteredComputers = computers.filter((pc) => {
+  const filteredComputers = (computers || []).filter((pc) => {
+    if (!pc) return false;
     const matchesSearch = 
-      pc.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (pc.id || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (pc.currentUser && pc.currentUser.toLowerCase().includes(searchQuery.toLowerCase()));
 
     let matchesMode = true;
@@ -315,7 +357,7 @@ function MonitoringGrid() {
     } else if (filterMode === 'research') {
       matchesMode = pc.status === 'online' && pc.currentMode?.toLowerCase() === 'research';
     } else if (filterMode === 'custom') {
-      matchesMode = pc.status === 'online' && (pc.currentMode?.toLowerCase().includes('genai') || pc.currentMode?.toLowerCase().includes('nail'));
+      matchesMode = pc.status === 'online' && (pc.currentMode?.toLowerCase()?.includes('genai') || pc.currentMode?.toLowerCase()?.includes('nail'));
     }
 
     return matchesSearch && matchesMode;
@@ -1536,11 +1578,11 @@ function MonitoringGrid() {
                 className="w-full px-3 py-2 rounded-lg studio-input text-slate-100 text-xs select-dark font-medium"
               >
                 <optgroup label="By Lab Mode / All Workstations">
-                  <option value="all">All Active Workstations ({computers.filter(c => c.status === 'online').length})</option>
-                  <option value="academic">Academic Mode ({computers.filter(c => c.status === 'online' && c.currentMode?.toLowerCase() === 'academic').length})</option>
-                  <option value="production">Production Mode ({computers.filter(c => c.status === 'online' && c.currentMode?.toLowerCase() === 'production').length})</option>
-                  <option value="research">Research Mode ({computers.filter(c => c.status === 'online' && c.currentMode?.toLowerCase() === 'research').length})</option>
-                  <option value="genai">GenAI Lab Mode ({computers.filter(c => c.status === 'online' && (c.currentMode?.toLowerCase().includes('genai') || c.currentMode?.toLowerCase().includes('nail'))).length})</option>
+                  <option value="all">All Active Workstations ({(computers || []).filter(c => c && c.status === 'online').length})</option>
+                  <option value="academic">Academic Mode ({(computers || []).filter(c => c && c.status === 'online' && c.currentMode?.toLowerCase() === 'academic').length})</option>
+                  <option value="production">Production Mode ({(computers || []).filter(c => c && c.status === 'online' && c.currentMode?.toLowerCase() === 'production').length})</option>
+                  <option value="research">Research Mode ({(computers || []).filter(c => c && c.status === 'online' && c.currentMode?.toLowerCase() === 'research').length})</option>
+                  <option value="genai">GenAI Lab Mode ({(computers || []).filter(c => c && c.status === 'online' && (c.currentMode?.toLowerCase()?.includes('genai') || c.currentMode?.toLowerCase()?.includes('nail'))).length})</option>
                 </optgroup>
 
                 {getAvailableBatches().length > 0 && (
