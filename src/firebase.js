@@ -262,6 +262,18 @@ export const subscribeCollection = (collectionName, callback) => {
   trafficTracker.registerListener(streamId, collectionName);
 
   if (!isMockMode) {
+    // Immediately serve cached or default data so UI components are instantly populated
+    // even if offline or network connection is slow
+    try {
+      const cached = localStorage.getItem(`vfx_cache_${collectionName}`) || localStorage.getItem(`vfx_${collectionName}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          callback(parsed);
+        }
+      }
+    } catch (e) {}
+
     // Real Firestore setup
     const q = collection(db, collectionName);
     const unsub = onSnapshot(q, (snapshot) => {
@@ -375,6 +387,24 @@ export const subscribeDocument = (collectionName, docId, callback) => {
   trafficTracker.registerListener(streamId, `${collectionName}/${docId}`);
 
   if (!isMockMode) {
+    // Immediately serve cached or collection-cached data so UI components are instantly populated
+    // even if offline or network connection is slow
+    try {
+      const cachedDoc = localStorage.getItem(`vfx_cache_${collectionName}_${docId}`);
+      if (cachedDoc) {
+        callback(JSON.parse(cachedDoc));
+      } else {
+        const cachedColl = localStorage.getItem(`vfx_cache_${collectionName}`) || localStorage.getItem(`vfx_${collectionName}`);
+        if (cachedColl) {
+          const items = JSON.parse(cachedColl);
+          if (Array.isArray(items)) {
+            const found = items.find(i => i.id === docId);
+            if (found) callback(found);
+          }
+        }
+      }
+    } catch (e) {}
+
     const docRef = doc(db, collectionName, docId);
     const unsub = onSnapshot(docRef, (snapshot) => {
       trafficTracker.recordRead(1, 300);
@@ -458,10 +488,35 @@ export const addDocument = async (collectionName, data) => {
  */
 export const updateDocument = async (collectionName, docId, data) => {
   trafficTracker.recordWrite(1, 500);
+
+  // Synchronously update local cache so any subsequent reads or listeners have latest state
+  try {
+    const cachedDocKey = `vfx_cache_${collectionName}_${docId}`;
+    const rawDoc = localStorage.getItem(cachedDocKey);
+    const updatedDoc = rawDoc ? { ...JSON.parse(rawDoc), ...data } : { id: docId, ...data };
+    localStorage.setItem(cachedDocKey, JSON.stringify(updatedDoc));
+
+    const collKey = `vfx_cache_${collectionName}`;
+    const rawColl = localStorage.getItem(collKey);
+    if (rawColl) {
+      let items = JSON.parse(rawColl);
+      if (Array.isArray(items)) {
+        const idx = items.findIndex(i => i.id === docId);
+        if (idx !== -1) items[idx] = { ...items[idx], ...data };
+        else items.push({ id: docId, ...data });
+        localStorage.setItem(collKey, JSON.stringify(items));
+      }
+    }
+  } catch (e) {}
+
   if (!isMockMode) {
     // Real Firestore
     const docRef = doc(db, collectionName, docId);
-    await setDoc(docRef, data, { merge: true });
+    try {
+      await setDoc(docRef, data, { merge: true });
+    } catch (err) {
+      console.warn(`Firestore updateDoc network deferred for ${collectionName}/${docId}:`, err);
+    }
   } else {
     // Mock Mode
     const storageKey = `vfx_${collectionName}`;

@@ -51,7 +51,17 @@ function StudentClient({ onSessionStateChange }) {
 
   // Workstation Identifier
   const defaultPc = import.meta.env.VITE_PC_ID || '';
-  const [selectedPC, setSelectedPC] = useState(defaultPc || 'VFX-01');
+  const [selectedPC, setSelectedPC] = useState(() => {
+    return defaultPc || localStorage.getItem('vfx_selected_pc') || 'VFX-01';
+  });
+
+  useEffect(() => {
+    if (selectedPC) {
+      try {
+        localStorage.setItem('vfx_selected_pc', selectedPC);
+      } catch (e) {}
+    }
+  }, [selectedPC]);
 
   // Form Inputs
   const [selectedBatch, setSelectedBatch] = useState('');
@@ -65,11 +75,23 @@ function StudentClient({ onSessionStateChange }) {
   }, [selectedMode, selectedBatch]);
 
   // Session State
-  const [activeSession, setActiveSession] = useState(null);
+  const [activeSession, setActiveSession] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vfx_active_session');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.computerId && parsed.studentName) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return null;
+  });
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [adminResetNotice, setAdminResetNotice] = useState(false);
   const [concurrencyError, setConcurrencyError] = useState('');
   const [isRendering, setIsRendering] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
 
   // Messaging & UI States
   const [isMinimized, setIsMinimized] = useState(false);
@@ -272,6 +294,149 @@ function StudentClient({ onSessionStateChange }) {
   const lastActivityRef = useRef(Date.now());
   const isRenderingRef = useRef(false);
   isRenderingRef.current = isRendering;
+
+  // 0. Initial Active Session Recovery from localStorage (offline/reboot persistence)
+  useEffect(() => {
+    if (activeSession) {
+      if (activeSession.computerId) setSelectedPC(activeSession.computerId);
+      if (activeSession.studentName) setSelectedStudent(activeSession.studentName);
+      if (activeSession.studentBatch) setSelectedBatch(activeSession.studentBatch);
+      if (activeSession.mode) setSelectedMode(activeSession.mode);
+      if (activeSession.taskDesc) setTodayWork(activeSession.taskDesc);
+
+      if (window.electronAPI && typeof window.electronAPI.startSession === 'function') {
+        window.electronAPI.startSession();
+      }
+      // Re-assert online status in Firestore
+      updateDocument('computers', activeSession.computerId, {
+        status: 'online',
+        currentUser: activeSession.studentName,
+        currentBatch: activeSession.studentBatch,
+        currentMode: activeSession.mode,
+        currentTask: activeSession.taskDesc,
+        startTime: activeSession.startTime || new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        lastLogoutStatus: null
+      }).catch(err => console.warn('Deferred online assertion on restored session:', err));
+    }
+  }, []);
+
+  // Offline Synchronization: Drain local queue of completed sessions & hours to Firestore
+  const syncOfflineQueue = async () => {
+    if (!navigator.onLine) return;
+    let queue = [];
+    try {
+      const raw = localStorage.getItem('vfx_offline_queue');
+      if (!raw) return;
+      queue = JSON.parse(raw);
+      if (!Array.isArray(queue) || queue.length === 0) return;
+    } catch (e) {
+      return;
+    }
+
+    console.log(`🔄 Syncing ${queue.length} offline log(s) to Firestore...`);
+    const remaining = [];
+
+    for (const item of queue) {
+      try {
+        // 1. Write completed session log to activity_logs
+        await addDocument('activity_logs', item.logData);
+
+        // 2. Update student cumulative hours
+        if (item.studentName) {
+          try {
+            const studentDoc = (students || []).find(s => (s.name || '').toLowerCase() === item.studentName.toLowerCase())
+              || await getDocument('students', item.studentId);
+            if (studentDoc) {
+              const newTotalSecs = (studentDoc.totalSeconds || 0) + (item.durationSecs || 0);
+              const newTotalHours = Number((newTotalSecs / 3600).toFixed(2));
+              await updateDocument('students', studentDoc.id, {
+                totalSeconds: newTotalSecs,
+                totalHours: newTotalHours,
+                lastLogoutTime: item.logData.endTime || new Date().toISOString()
+              });
+            }
+          } catch (sErr) {
+            console.warn('Student cumulative hours sync deferred:', sErr);
+          }
+        }
+
+        // 3. Update workstation status to offline if this was a normal logout
+        if (!item.wasResetByAdmin && item.computerId) {
+          try {
+            await updateDocument('computers', item.computerId, {
+              status: 'offline',
+              lastLogoutStatus: item.logoutStatus || 'Normal Logout',
+              currentUser: null,
+              currentMode: null,
+              currentTask: null,
+              isRendering: false,
+              startTime: null,
+              lastActive: new Date().toISOString(),
+              message: null
+            });
+          } catch (cErr) {
+            console.warn('Workstation offline status sync deferred:', cErr);
+          }
+        }
+
+        console.log(`✅ Synced offline session log for ${item.logData.studentId} (${item.logData.computerId})`);
+      } catch (err) {
+        console.error('Failed to sync offline item, keeping in queue:', err);
+        remaining.push(item);
+      }
+    }
+
+    try {
+      localStorage.setItem('vfx_offline_queue', JSON.stringify(remaining));
+    } catch (e) {}
+  };
+
+  // Network connection listeners & automatic synchronization loop
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOfflineMode(false);
+      console.log('🌐 Internet connection restored. Syncing offline data and workstation status.');
+      syncOfflineQueue();
+      if (sessionRef.current && sessionRef.current.computerId) {
+        const active = sessionRef.current;
+        updateDocument('computers', active.computerId, {
+          status: 'online',
+          currentUser: active.studentName,
+          currentBatch: active.studentBatch,
+          currentMode: active.mode,
+          currentTask: active.taskDesc,
+          startTime: active.startTime,
+          lastActive: new Date().toISOString(),
+          lastLogoutStatus: null
+        }).catch(err => console.error('Active session reconnect sync failed:', err));
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOfflineMode(true);
+      console.warn('⚠️ Network offline detected. Switching to local offline mode.');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial sync on mount
+    syncOfflineQueue();
+
+    // Periodic sync attempt every 15 seconds if online
+    const syncTimer = setInterval(() => {
+      if (navigator.onLine) {
+        syncOfflineQueue();
+      }
+    }, 15000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(syncTimer);
+    };
+  }, [students]);
 
   // 1. Database Subscriptions
   useEffect(() => {
@@ -493,8 +658,14 @@ function StudentClient({ onSessionStateChange }) {
 
       const sendHeartbeat = () => {
         updateDocument('computers', activeSession.computerId, {
+          status: 'online',
+          currentUser: activeSession.studentName,
+          currentBatch: activeSession.studentBatch,
+          currentMode: activeSession.mode,
+          currentTask: activeSession.taskDesc,
+          startTime: startTimeToSync,
           lastActive: new Date().toISOString(),
-          startTime: startTimeToSync
+          lastLogoutStatus: null
         }).catch(err => console.error('Heartbeat update failed:', err));
       };
 
@@ -526,7 +697,10 @@ function StudentClient({ onSessionStateChange }) {
     const currentPcStatus = computers.find(c => c.id === activeSession.computerId);
     if (currentPcStatus && currentPcStatus.status === 'offline' && currentPcStatus.currentUser === null) {
       // ONLY log out if the HOD deliberately performed an administrative reset ("Reset by HOD")
-      if (currentPcStatus.lastLogoutStatus === 'Reset by HOD') {
+      // AND that reset occurred after our current session started
+      const resetTimeMs = currentPcStatus.lastActive ? new Date(currentPcStatus.lastActive).getTime() : 0;
+      const sessionStartMs = activeSession.startTime ? new Date(activeSession.startTime).getTime() : 0;
+      if (currentPcStatus.lastLogoutStatus === 'Reset by HOD' && resetTimeMs > sessionStartMs) {
         handleLogout(true);
         return;
       }
@@ -903,36 +1077,38 @@ function StudentClient({ onSessionStateChange }) {
 
     if (isSubmittingSession) return;
 
-    // PC OCCUPANCY CHECK: Verify if the selected PC is actively online (with self-healing for stale shutdown locks)
-    const occupiedPc = computers.find(c => {
-      if (c.id !== selectedPC || c.status !== 'online') return false;
-      // Must have an active current user to be considered occupied
-      if (!c.currentUser || !c.currentUser.trim()) return false;
+    // PC OCCUPANCY CHECK: Only enforce when online (to allow offline local usage)
+    if (navigator.onLine) {
+      const occupiedPc = computers.find(c => {
+        if (c.id !== selectedPC || c.status !== 'online') return false;
+        // Must have an active current user to be considered occupied
+        if (!c.currentUser || !c.currentUser.trim()) return false;
 
-      // Self-healing check: If PC has been inactive for > 120s (stale lock from forced shutdown/power off)
-      if (c.lastActive) {
-        const lastActiveMs = new Date(c.lastActive).getTime();
-        if (!isNaN(lastActiveMs)) {
-          const elapsedSecs = (Date.now() - lastActiveMs) / 1000;
-          if (elapsedSecs > 120) {
-            console.warn(`Self-healing: Overriding stale shutdown lock on ${c.id} (inactive for ${Math.floor(elapsedSecs)}s).`);
-            return false; // Treat as vacant
+        // Self-healing check: If PC has been inactive for > 120s (stale lock from forced shutdown/power off)
+        if (c.lastActive) {
+          const lastActiveMs = new Date(c.lastActive).getTime();
+          if (!isNaN(lastActiveMs)) {
+            const elapsedSecs = (Date.now() - lastActiveMs) / 1000;
+            if (elapsedSecs > 120) {
+              console.warn(`Self-healing: Overriding stale shutdown lock on ${c.id} (inactive for ${Math.floor(elapsedSecs)}s).`);
+              return false; // Treat as vacant
+            }
           }
         }
-      }
-      return true;
-    });
+        return true;
+      });
 
-    if (occupiedPc) {
-      // Check if occupied by SAME student on SAME computer (e.g. re-click or re-login)
-      const isSameStudent = (occupiedPc.currentUser || '').trim().toLowerCase() === selectedStudent.trim().toLowerCase();
-      if (!isSameStudent) {
-        const warningMsg = `Access Denied: Workstation ${selectedPC} is currently occupied by ${occupiedPc.currentUser}. Please select a vacant workstation or contact HOD.`;
-        setConcurrencyError(warningMsg);
-        alert(warningMsg);
-        return;
-      } else {
-        console.log(`Same student (${selectedStudent}) re-initializing session on ${selectedPC}. Overriding lock.`);
+      if (occupiedPc) {
+        // Check if occupied by SAME student on SAME computer (e.g. re-click or re-login)
+        const isSameStudent = (occupiedPc.currentUser || '').trim().toLowerCase() === selectedStudent.trim().toLowerCase();
+        if (!isSameStudent) {
+          const warningMsg = `Access Denied: Workstation ${selectedPC} is currently occupied by ${occupiedPc.currentUser}. Please select a vacant workstation or contact HOD.`;
+          setConcurrencyError(warningMsg);
+          alert(warningMsg);
+          return;
+        } else {
+          console.log(`Same student (${selectedStudent}) re-initializing session on ${selectedPC}. Overriding lock.`);
+        }
       }
     }
 
@@ -963,13 +1139,15 @@ function StudentClient({ onSessionStateChange }) {
         message: null
       };
 
+      // Save active session locally immediately so reload/refresh/offline keeps it active
+      try {
+        localStorage.setItem('vfx_active_session', JSON.stringify(sessionData));
+      } catch (e) {}
+
       // Optimistically update local computer state before activating session so stale offline state never triggers reset
       setComputers([{ id: selectedPC, ...onlinePayload }]);
 
-      // 1. Update computer status to Online in Firestore
-      await updateDocument('computers', selectedPC, onlinePayload);
-
-      // 2. Clear notices and enter locking screen
+      // Clear notices and enter locking screen
       setAdminResetNotice(false);
       setConcurrencyError('');
       
@@ -984,14 +1162,26 @@ function StudentClient({ onSessionStateChange }) {
         over: false
       });
 
+      // Activate session immediately in state & Electron
       setActiveSession(sessionData);
       if (window.electronAPI && typeof window.electronAPI.startSession === 'function') {
         window.electronAPI.startSession();
       }
+
+      // Update computer status in Firestore non-blockingly (resilient to offline)
+      updateDocument('computers', selectedPC, onlinePayload)
+        .then(() => {
+          console.log('Workstation online status synced to Firestore');
+        })
+        .catch((err) => {
+          console.warn('Network offline or update deferred during session start:', err);
+        })
+        .finally(() => {
+          setIsSubmittingSession(false);
+        });
     } catch (err) {
       console.error('Failed to log in workstation:', err);
-      alert('Session connection error. Please try again.');
-    } finally {
+      // Even if local error occurs, ensure session state is unlocked
       setIsSubmittingSession(false);
     }
   };
@@ -1047,7 +1237,11 @@ function StudentClient({ onSessionStateChange }) {
       window.electronAPI.endSession();
     }
 
-    // Immediately clear activeSession state so that no effects or double-triggers can see it as active
+    // Immediately clear activeSession from localStorage & state so that no effects or double-triggers can see it as active
+    try {
+      localStorage.removeItem('vfx_active_session');
+    } catch (e) {}
+
     setActiveSession(null);
     sessionRef.current = null;
     setIsRendering(false);
@@ -1084,11 +1278,11 @@ function StudentClient({ onSessionStateChange }) {
           startTime: null,
           lastActive: new Date().toISOString(),
           message: null
-        }).catch(err => console.error('Failed to update PC offline status:', err));
+        }).catch(err => console.warn('Failed to update PC offline status immediately (will sync later):', err));
       }
 
-      // 2. Write completed session details to activity_logs & update student total hours concurrently
-      const logPromise = addDocument('activity_logs', {
+      // 2. Prepare offline log queue item so data is NEVER lost regardless of connectivity
+      const logData = {
         studentId: session.studentName,
         computerId: session.computerId,
         mode: session.mode,
@@ -1098,23 +1292,35 @@ function StudentClient({ onSessionStateChange }) {
         status: logoutStatus,
         durationSecs: durationSecs,
         totalHours: totalHours
-      });
+      };
 
-      const studentDoc = students.find(s => (s.name || '').toLowerCase() === (session.studentName || '').toLowerCase());
-      let studentPromise = Promise.resolve();
-      if (studentDoc) {
-        const newTotalSecs = (studentDoc.totalSeconds || 0) + durationSecs;
-        const newTotalHours = Number((newTotalSecs / 3600).toFixed(2));
-        studentPromise = updateDocument('students', studentDoc.id, {
-          totalSeconds: newTotalSecs,
-          totalHours: newTotalHours,
-          lastLogoutTime: new Date().toISOString()
-        });
+      const studentDoc = (students || []).find(s => (s.name || '').toLowerCase() === (session.studentName || '').toLowerCase());
+
+      const queueItem = {
+        id: `queue-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        logData,
+        studentId: studentDoc ? studentDoc.id : null,
+        studentName: session.studentName,
+        durationSecs,
+        computerId: session.computerId,
+        wasResetByAdmin,
+        logoutStatus,
+        timestamp: Date.now()
+      };
+
+      // Add to offline queue in localStorage
+      try {
+        const existingQueue = JSON.parse(localStorage.getItem('vfx_offline_queue') || '[]');
+        existingQueue.push(queueItem);
+        localStorage.setItem('vfx_offline_queue', JSON.stringify(existingQueue));
+      } catch (e) {
+        console.error('Failed to save to offline queue:', e);
       }
 
-      await Promise.allSettled([logPromise, studentPromise]);
+      // 3. Attempt immediate sync to Firestore if online
+      syncOfflineQueue();
 
-      // 3. Reset local states
+      // 4. Reset local states
       setTodayWork('');
       if (batches.length > 0) {
         setSelectedBatch(batches[0].batchName || batches[0].name || batches[0].id);
@@ -1936,9 +2142,11 @@ function StudentClient({ onSessionStateChange }) {
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[8px] font-extrabold tracking-wider ${
                   isMockMode 
                     ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' 
-                    : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                    : isOfflineMode
+                      ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                      : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
                 }`}>
-                  {isMockMode ? 'SIMULATION' : 'LIVE'}
+                  {isMockMode ? 'SIMULATION' : isOfflineMode ? 'OFFLINE READY' : 'LIVE'}
                 </span>
               </div>
               <h3 className="text-xl font-bold text-white">Workstation Login</h3>
@@ -2079,7 +2287,7 @@ function StudentClient({ onSessionStateChange }) {
                       ))
                     ) : (
                       Array.from({ length: 25 }, (_, i) => {
-                        const id = `PC-${String(i + 1).padStart(2, '0')}`;
+                        const id = `VFX-${String(i + 1).padStart(2, '0')}`;
                         return <option key={id} value={id}>{id}</option>;
                       })
                     )}

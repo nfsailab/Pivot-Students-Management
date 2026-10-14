@@ -207,8 +207,8 @@ function MonitoringGrid() {
           // Measure time since last heartbeat change using local clock (immune to clock skew between PCs)
           const localInactiveSecs = tracked ? (now - tracked.seenAt) / 1000 : 0;
           const rawElapsedSecs = (now - new Date(pc.lastActive).getTime()) / 1000;
-          // Trigger only if no heartbeat update received for >120s (or >300s raw on initial dashboard boot)
-          const isStale = localInactiveSecs > 120 || (!tracked && rawElapsedSecs > 300);
+          // Trigger only if no heartbeat update received for >240s (4 mins) to prevent false positives during heavy render load
+          const isStale = localInactiveSecs > 240 || (!tracked && rawElapsedSecs > 360);
 
           if (isStale) {
             const reportedSecs = Math.max(Math.floor(localInactiveSecs), Math.floor(rawElapsedSecs));
