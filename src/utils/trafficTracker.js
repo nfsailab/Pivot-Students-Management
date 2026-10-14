@@ -188,6 +188,46 @@ class TrafficTracker {
     this.notifySubscribers();
   }
 
+  setCustomQuotaCounts(reads, writes, deletes = 0, bytes = 0) {
+    const today = getTodayKey();
+    this.todayDate = today;
+    this.dailyReads = Math.max(0, parseInt(reads, 10) || 0);
+    this.dailyWrites = Math.max(0, parseInt(writes, 10) || 0);
+    this.dailyDeletes = Math.max(0, parseInt(deletes, 10) || 0);
+    if (bytes) this.dailyBytes = Math.max(0, parseInt(bytes, 10) || 0);
+    this.saveDailyCounters();
+    this.notifySubscribers();
+  }
+
+  syncWithCloudTelemetry(cloudData) {
+    if (!cloudData) return;
+    const today = getTodayKey();
+    if (cloudData.date && cloudData.date !== today) return;
+
+    let changed = false;
+    if (typeof cloudData.dailyReads === 'number' && cloudData.dailyReads > this.dailyReads) {
+      this.dailyReads = cloudData.dailyReads;
+      changed = true;
+    }
+    if (typeof cloudData.dailyWrites === 'number' && cloudData.dailyWrites > this.dailyWrites) {
+      this.dailyWrites = cloudData.dailyWrites;
+      changed = true;
+    }
+    if (typeof cloudData.dailyDeletes === 'number' && cloudData.dailyDeletes > this.dailyDeletes) {
+      this.dailyDeletes = cloudData.dailyDeletes;
+      changed = true;
+    }
+    if (typeof cloudData.dailyBytes === 'number' && cloudData.dailyBytes > this.dailyBytes) {
+      this.dailyBytes = cloudData.dailyBytes;
+      changed = true;
+    }
+
+    if (changed) {
+      this.saveDailyCounters();
+      this.notifySubscribers();
+    }
+  }
+
   simulateOps(reads = 0, writes = 0) {
     if (reads > 0) this.recordRead(reads);
     if (writes > 0) this.recordWrite(writes);

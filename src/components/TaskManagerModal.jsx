@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { trafficTracker } from '../utils/trafficTracker';
+import { updateDocument } from '../firebase';
 import { 
   X, 
   Activity, 
@@ -13,12 +14,19 @@ import {
   Sparkles,
   Info,
   Server,
-  Layers
+  Layers,
+  Sliders,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 
 function TaskManagerModal({ isOpen, onClose }) {
   const [stats, setStats] = useState(() => trafficTracker.getTrafficStats());
   const [activeTab, setActiveTab] = useState('reads'); // 'reads', 'writes', 'streams', 'bandwidth'
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [customReads, setCustomReads] = useState('');
+  const [customWrites, setCustomWrites] = useState('');
+  const [syncSuccess, setSyncSuccess] = useState(false);
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -191,6 +199,47 @@ function TaskManagerModal({ isOpen, onClose }) {
   const handleResetCounters = () => {
     if (confirm('Reset daily quota usage counters for today?')) {
       trafficTracker.resetDailyStats();
+      updateDocument('system_settings', 'quota_telemetry', {
+        id: 'quota_telemetry',
+        date: stats.date,
+        dailyReads: 0,
+        dailyWrites: 0,
+        dailyDeletes: 0,
+        dailyBytes: 0,
+        lastUpdated: new Date().toISOString()
+      }).catch(() => {});
+    }
+  };
+
+  const handleOpenSyncModal = () => {
+    setCustomReads(stats.dailyReads ? String(stats.dailyReads) : '52000');
+    setCustomWrites(stats.dailyWrites ? String(stats.dailyWrites) : '3500');
+    setSyncSuccess(false);
+    setShowSyncModal(true);
+  };
+
+  const handleApplyConsoleSync = async () => {
+    const reads = parseInt(customReads, 10) || 0;
+    const writes = parseInt(customWrites, 10) || 0;
+    trafficTracker.setCustomQuotaCounts(reads, writes);
+    try {
+      await updateDocument('system_settings', 'quota_telemetry', {
+        id: 'quota_telemetry',
+        date: stats.date,
+        dailyReads: reads,
+        dailyWrites: writes,
+        dailyDeletes: stats.dailyDeletes || 0,
+        dailyBytes: stats.dailyBytes || 0,
+        lastUpdated: new Date().toISOString()
+      });
+      setSyncSuccess(true);
+      setTimeout(() => {
+        setShowSyncModal(false);
+        setSyncSuccess(false);
+      }, 900);
+    } catch (err) {
+      console.warn('Failed to save quota to cloud:', err);
+      setShowSyncModal(false);
     }
   };
 
@@ -334,6 +383,14 @@ function TaskManagerModal({ isOpen, onClose }) {
               <span className="text-[10px] font-extrabold uppercase text-slate-500 tracking-wider block px-1">
                 Telemetry Actions
               </span>
+              <button
+                onClick={handleOpenSyncModal}
+                className="w-full py-2 px-3 bg-studio-accent-purple/20 hover:bg-studio-accent-purple/30 text-studio-accent-purple hover:text-white text-xs font-semibold rounded-xl border border-studio-accent-purple/30 transition flex items-center justify-center gap-2"
+              >
+                <Sliders className="h-3.5 w-3.5" />
+                Sync with Firebase Console
+              </button>
+
               <button
                 onClick={handleSimulateOps}
                 className="w-full py-2 px-3 bg-studio-800 hover:bg-studio-700 text-slate-200 text-xs font-semibold rounded-xl border border-white/5 transition flex items-center justify-center gap-2"
@@ -482,6 +539,81 @@ function TaskManagerModal({ isOpen, onClose }) {
             Close Task Manager
           </button>
         </div>
+
+        {/* Firebase Console Quota Calibration Overlay */}
+        {showSyncModal && (
+          <div className="absolute inset-0 z-50 bg-studio-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-studio-900 border border-studio-accent-purple/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-scale-in">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2 text-white font-bold text-sm uppercase">
+                  <Sliders className="h-4 w-4 text-studio-accent-purple" />
+                  Sync with Firebase Console
+                </div>
+                <button 
+                  onClick={() => setShowSyncModal(false)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Enter the exact numbers currently displayed in your <strong>Google Firebase Console (Spark Plan Project Quotas)</strong>. This calibrates your HOD performance meter to match your real cloud quota consumption across all devices.
+              </p>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-400 block mb-1">
+                    Daily Reads (from Console, e.g. 52000)
+                  </label>
+                  <input
+                    type="number"
+                    value={customReads}
+                    onChange={(e) => setCustomReads(e.target.value)}
+                    placeholder="e.g. 52000"
+                    className="w-full bg-studio-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-sm focus:border-studio-accent-purple outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500 font-mono block mt-0.5">Free limit: 50,000 reads/day</span>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-400 block mb-1">
+                    Daily Writes (from Console, e.g. 3500)
+                  </label>
+                  <input
+                    type="number"
+                    value={customWrites}
+                    onChange={(e) => setCustomWrites(e.target.value)}
+                    placeholder="e.g. 3500"
+                    className="w-full bg-studio-950 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-sm focus:border-studio-accent-purple outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500 font-mono block mt-0.5">Free limit: 20,000 writes/day</span>
+                </div>
+              </div>
+
+              {syncSuccess && (
+                <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold py-1">
+                  <CheckCircle2 className="h-4 w-4" /> Successfully calibrated and saved to cloud!
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
+                <button
+                  onClick={() => setShowSyncModal(false)}
+                  className="px-4 py-2 bg-studio-800 hover:bg-studio-700 text-slate-300 rounded-xl text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApplyConsoleSync}
+                  className="px-4 py-2 bg-studio-accent-purple hover:bg-studio-accent-purple/90 text-white rounded-xl text-xs font-bold shadow-glow-purple flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Apply & Save to Cloud
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

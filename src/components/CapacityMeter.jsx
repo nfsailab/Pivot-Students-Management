@@ -31,7 +31,42 @@ function CapacityMeter({ onOpenTaskManager }) {
     } catch (e) {
       console.error('Failed to subscribe to traffic_control:', e);
     }
-    return () => unsub && unsub();
+
+    // Subscribe to lab-wide quota telemetry synced across all machines
+    let unsubQuota = null;
+    try {
+      unsubQuota = subscribeDocument('system_settings', 'quota_telemetry', (data) => {
+        if (data) {
+          trafficTracker.syncWithCloudTelemetry(data);
+        }
+      });
+    } catch (e) {
+      console.error('Failed to subscribe to quota_telemetry:', e);
+    }
+
+    return () => {
+      if (unsub) unsub();
+      if (unsubQuota) unsubQuota();
+    };
+  }, []);
+
+  // Periodic background telemetry flush to cloud (every 60s)
+  useEffect(() => {
+    const syncTimer = setInterval(() => {
+      const currentStats = trafficTracker.getTrafficStats();
+      if (currentStats && (currentStats.dailyReads > 0 || currentStats.dailyWrites > 0)) {
+        updateDocument('system_settings', 'quota_telemetry', {
+          id: 'quota_telemetry',
+          date: currentStats.date,
+          dailyReads: currentStats.dailyReads,
+          dailyWrites: currentStats.dailyWrites,
+          dailyDeletes: currentStats.dailyDeletes,
+          dailyBytes: currentStats.dailyBytes,
+          lastUpdated: new Date().toISOString()
+        }).catch(() => {});
+      }
+    }, 60000);
+    return () => clearInterval(syncTimer);
   }, []);
 
   const changeTrafficMode = async (newMode, newInterval) => {

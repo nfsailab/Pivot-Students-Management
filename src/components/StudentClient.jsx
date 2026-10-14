@@ -4,12 +4,14 @@ import pivotLogo from '../pivot-logo.png';
 import packageJson from '../../package.json';
 import { 
   subscribeCollection, 
+  getCollection,
   subscribeDocument,
   getDocument,
   addDocument,
   updateDocument,
   isMockMode 
 } from '../firebase';
+import { trafficTracker } from '../utils/trafficTracker';
 import { 
   Tv, 
   User, 
@@ -426,7 +428,9 @@ function StudentClient({ onSessionStateChange }) {
 
     // Periodic sync attempt every 15 seconds if online
     const syncTimer = setInterval(() => {
-      if (navigator.onLine) {
+      const onlineNow = navigator.onLine;
+      setIsOfflineMode(!onlineNow);
+      if (onlineNow) {
         syncOfflineQueue();
       }
     }, 15000);
@@ -474,38 +478,46 @@ function StudentClient({ onSessionStateChange }) {
       setGenaiConfigsList(data);
     });
 
-    const unsubWorkstations = subscribeCollection('computers', (data) => {
-      const map = new Map();
-      (data || []).forEach(w => {
-        const displayName = (w.name || w.id || '').trim();
-        if (!displayName) return;
-
-        if (map.has(displayName)) {
-          const existing = map.get(displayName);
-          map.set(displayName, {
-            ...w,
-            ...existing,
-            gpu: existing.gpu || w.gpu || '',
-            vram: existing.vram || w.vram || '',
-            ram: existing.ram || w.ram || '',
-            processor: existing.processor || w.processor || '',
-            name: displayName
-          });
-        } else {
-          map.set(displayName, { ...w, name: displayName });
+    // Fetch workstations once on startup without continuous lab-wide heartbeat listener
+    const loadWorkstations = async () => {
+      try {
+        const cached = localStorage.getItem('vfx_workstations_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setWorkstationsList(parsed);
+          }
         }
-      });
-
-      const sorted = Array.from(map.values()).sort((a, b) => 
-        (a.name || '').localeCompare(b.name || '', undefined, { numeric: true })
-      );
-      setWorkstationsList(sorted);
-    });
+        const data = await getCollection('computers');
+        if (Array.isArray(data) && data.length > 0) {
+          const map = new Map();
+          data.forEach(w => {
+            const displayName = (w.name || w.id || '').trim();
+            if (!displayName) return;
+            if (map.has(displayName)) {
+              const existing = map.get(displayName);
+              map.set(displayName, { ...w, ...existing, name: displayName });
+            } else {
+              map.set(displayName, { ...w, name: displayName });
+            }
+          });
+          const sorted = Array.from(map.values()).sort((a, b) => 
+            (a.name || '').localeCompare(b.name || '', undefined, { numeric: true })
+          );
+          setWorkstationsList(sorted);
+          try {
+            localStorage.setItem('vfx_workstations_cache', JSON.stringify(sorted));
+          } catch (e) {}
+        }
+      } catch (err) {
+        console.warn('Error loading workstations:', err);
+      }
+    };
+    loadWorkstations();
 
     return () => {
       unsubBatches();
       unsubStudents();
-      unsubWorkstations();
       unsubModes();
       unsubAcad();
       unsubProd();
@@ -665,14 +677,23 @@ function StudentClient({ onSessionStateChange }) {
           currentTask: activeSession.taskDesc,
           startTime: startTimeToSync,
           lastActive: new Date().toISOString(),
-          lastLogoutStatus: null
-        }).catch(err => console.error('Heartbeat update failed:', err));
+          lastLogoutStatus: null,
+          clientReads: trafficTracker.dailyReads,
+          clientWrites: trafficTracker.dailyWrites
+        })
+        .then(() => {
+          setIsOfflineMode(false);
+        })
+        .catch(err => {
+          console.warn('Heartbeat deferred (offline):', err);
+          setIsOfflineMode(true);
+        });
       };
 
       sendHeartbeat();
 
-      // Cap effective sync interval at 15s so heartbeat always arrives well inside any dashboard watchdog
-      const effectiveInterval = Math.min(syncIntervalMs, 15000);
+      // Respect HOD Dynamic Sync Control (Eco 30s, Std 15s, Exam 5s), clamped safely between 10s and 60s
+      const effectiveInterval = Math.max(10000, Math.min(syncIntervalMs || 30000, 60000));
 
       heartbeatInterval = setInterval(sendHeartbeat, effectiveInterval);
     }
@@ -1647,10 +1668,21 @@ function StudentClient({ onSessionStateChange }) {
             }`}
           >
             <span className="relative flex h-2 w-2 shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              {isOfflineMode ? (
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              ) : (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </>
+              )}
             </span>
             <span className="text-[11px] font-bold text-slate-200 uppercase tracking-wider shrink-0">{activeSession.computerId}</span>
+            {isOfflineMode && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[8px] font-extrabold text-amber-400 shrink-0">
+                OFFLINE
+              </span>
+            )}
             {isRendering && (
               <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-[8px] font-extrabold text-amber-300 animate-pulse shrink-0">
                 🎬 RENDERING
@@ -1673,9 +1705,15 @@ function StudentClient({ onSessionStateChange }) {
                 <span className="font-mono text-xs font-bold text-white bg-studio-900 border border-white/5 px-2.5 py-0.5 rounded-lg">
                   {activeSession.computerId}
                 </span>
-                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-extrabold text-emerald-400 tracking-wider">
-                  ONLINE
-                </span>
+                {isOfflineMode ? (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-[8px] font-extrabold text-amber-400 tracking-wider">
+                    OFFLINE
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[8px] font-extrabold text-emerald-400 tracking-wider">
+                    ONLINE
+                  </span>
+                )}
               </div>
               <div className="flex gap-2">
                 <button 
@@ -2143,10 +2181,10 @@ function StudentClient({ onSessionStateChange }) {
                   isMockMode 
                     ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' 
                     : isOfflineMode
-                      ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                      ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400'
                       : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
                 }`}>
-                  {isMockMode ? 'SIMULATION' : isOfflineMode ? 'OFFLINE READY' : 'LIVE'}
+                  {isMockMode ? 'SIMULATION' : isOfflineMode ? 'OFFLINE' : 'ONLINE'}
                 </span>
               </div>
               <h3 className="text-xl font-bold text-white">Workstation Login</h3>

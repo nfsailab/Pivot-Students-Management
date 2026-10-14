@@ -335,6 +335,34 @@ export const subscribeCollection = (collectionName, callback) => {
 };
 
 /**
+ * Fetches all documents in a collection (one-time read, no ongoing listeners).
+ */
+export const getCollection = async (collectionName) => {
+  if (!isMockMode) {
+    try {
+      const collRef = collection(db, collectionName);
+      const snapshot = await getDocs(collRef);
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      trafficTracker.recordRead(Math.max(1, data.length), 300);
+      try {
+        localStorage.setItem(`vfx_cache_${collectionName}`, JSON.stringify(data));
+      } catch (e) {}
+      return data;
+    } catch (e) {
+      console.warn(`getCollection error for ${collectionName}:`, e);
+      try {
+        const cached = localStorage.getItem(`vfx_cache_${collectionName}`);
+        if (cached) return JSON.parse(cached);
+      } catch (err) {}
+      return [];
+    }
+  } else {
+    const data = JSON.parse(localStorage.getItem(`vfx_${collectionName}`) || '[]');
+    return data;
+  }
+};
+
+/**
  * Fetches a single document from a collection (one-time read).
  */
 export const getDocument = async (collectionName, docId) => {
@@ -757,6 +785,7 @@ if (hasValidFirebaseConfig) {
 export { db, auth, isMockMode, seedFirebaseDatabase };
 export default {
   subscribeCollection,
+  getCollection,
   getDocument,
   subscribeDocument,
   addDocument,
