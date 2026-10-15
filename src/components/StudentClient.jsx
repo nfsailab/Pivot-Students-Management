@@ -958,17 +958,19 @@ function StudentClient({ onSessionStateChange }) {
   };
 
   // Find configuration specific to selected batch
-  const activeAcad = acadConfigsList.find(c => c.id === selectedBatch) || {
+  const effectiveBatchForConfig = activeSession?.studentBatch || selectedBatch;
+  const activeAcad = acadConfigsList.find(c => c.id === effectiveBatchForConfig) || {
     topics: [],
     instructions: 'Follow batch instructions.',
     timeslot: 'N/A'
   };
 
-  const activeProd = prodConfigsList.find(c => c.id === selectedBatch) || {
-    projects: []
+  const activeProd = prodConfigsList.find(c => c.id === effectiveBatchForConfig) || {
+    projects: [],
+    instructions: 'Execute assigned production shots and tasks.'
   };
 
-  const activeGenai = genaiConfigsList.find(c => c.id === selectedBatch) || {
+  const activeGenai = genaiConfigsList.find(c => c.id === effectiveBatchForConfig) || {
     projects: [],
     instructions: 'Execute independent GenAI workflows.'
   };
@@ -1390,13 +1392,121 @@ function StudentClient({ onSessionStateChange }) {
 
   // Helper mode styling
   const getModeTheme = (modeName) => {
-    switch(modeName.toLowerCase()) {
-      case 'academic': return { border: 'border-studio-accent-blue/30', bg: 'bg-studio-accent-blue/5', text: 'text-studio-accent-blue', icon: <GraduationCap className="h-4 w-4" /> };
-      case 'production': return { border: 'border-studio-accent-purple/30', bg: 'bg-studio-accent-purple/5', text: 'text-studio-accent-purple', icon: <Film className="h-4 w-4" /> };
-      case 'research': return { border: 'border-emerald-500/30', bg: 'bg-emerald-500/5', text: 'text-emerald-400', icon: <BookOpen className="h-4 w-4" /> };
+    switch((modeName || '').toLowerCase()) {
+      case 'academic': return {
+        border: 'border-studio-accent-blue/30',
+        bg: 'bg-studio-accent-blue/5',
+        text: 'text-studio-accent-blue',
+        categoryText: 'text-studio-accent-blue',
+        pillBorder: 'border-studio-accent-blue/40',
+        pillBg: 'bg-studio-accent-blue/10',
+        pillText: 'text-studio-accent-blue',
+        selectedBg: 'bg-studio-accent-blue/20',
+        selectedBorder: 'border-studio-accent-blue',
+        selectedRing: 'ring-studio-accent-blue',
+        badgeSelectedBg: 'bg-studio-accent-blue text-white',
+        icon: <GraduationCap className="h-4 w-4" />
+      };
+      case 'production': return {
+        border: 'border-studio-accent-purple/30',
+        bg: 'bg-studio-accent-purple/5',
+        text: 'text-studio-accent-purple',
+        categoryText: 'text-studio-accent-purple',
+        pillBorder: 'border-studio-accent-purple/40',
+        pillBg: 'bg-studio-accent-purple/10',
+        pillText: 'text-studio-accent-purple',
+        selectedBg: 'bg-studio-accent-purple/20',
+        selectedBorder: 'border-studio-accent-purple',
+        selectedRing: 'ring-studio-accent-purple',
+        badgeSelectedBg: 'bg-studio-accent-purple text-white',
+        icon: <Film className="h-4 w-4" />
+      };
+      case 'research': return {
+        border: 'border-emerald-500/30',
+        bg: 'bg-emerald-500/5',
+        text: 'text-emerald-400',
+        categoryText: 'text-emerald-400',
+        pillBorder: 'border-emerald-500/40',
+        pillBg: 'bg-emerald-500/10',
+        pillText: 'text-emerald-400',
+        selectedBg: 'bg-emerald-500/20',
+        selectedBorder: 'border-emerald-500',
+        selectedRing: 'ring-emerald-500',
+        badgeSelectedBg: 'bg-emerald-500 text-slate-950 font-black',
+        icon: <BookOpen className="h-4 w-4" />
+      };
       case 'genai lab':
-      case 'nail, genai lab': return { border: 'border-amber-500/30', bg: 'bg-amber-500/5', text: 'text-amber-400', icon: <Sparkles className="h-4 w-4" /> };
-      default: return { border: 'border-slate-500/30', bg: 'bg-slate-500/5', text: 'text-slate-400', icon: <Sparkles className="h-4 w-4" /> };
+      case 'nail, genai lab': return {
+        border: 'border-amber-500/30',
+        bg: 'bg-amber-500/5',
+        text: 'text-amber-400',
+        categoryText: 'text-amber-400',
+        pillBorder: 'border-amber-500/40',
+        pillBg: 'bg-amber-500/10',
+        pillText: 'text-amber-400',
+        selectedBg: 'bg-amber-500/20',
+        selectedBorder: 'border-amber-500',
+        selectedRing: 'ring-amber-500',
+        badgeSelectedBg: 'bg-amber-500 text-slate-950 font-black',
+        icon: <Sparkles className="h-4 w-4" />
+      };
+      default: return {
+        border: 'border-slate-500/30',
+        bg: 'bg-slate-500/5',
+        text: 'text-slate-400',
+        categoryText: 'text-slate-400',
+        pillBorder: 'border-slate-500/40',
+        pillBg: 'bg-slate-500/10',
+        pillText: 'text-slate-400',
+        selectedBg: 'bg-slate-500/20',
+        selectedBorder: 'border-slate-500',
+        selectedRing: 'ring-slate-500',
+        badgeSelectedBg: 'bg-slate-500 text-white',
+        icon: <Sparkles className="h-4 w-4" />
+      };
+    }
+  };
+
+  // Resolve session display text (handles multi-sessions, single session, or timing fallback)
+  const resolveSessionDisplay = (item, batchName) => {
+    if (!item) return 'Session 1';
+    if (typeof item === 'string') return 'Session 1';
+    if (Array.isArray(item.sessionNames) && item.sessionNames.length > 0) {
+      return item.sessionNames.join(', ');
+    }
+    if (item.sessionName && typeof item.sessionName === 'string' && item.sessionName.trim()) {
+      return item.sessionName.trim();
+    }
+    if (item.timing) {
+      const currentBatch = batches.find(b => b.batchName === batchName);
+      const matched = (currentBatch?.sessionTimes || []).find(s => s.timing === item.timing);
+      if (matched?.name) return matched.name;
+    }
+    return 'Session 1';
+  };
+
+  // Resolve category (e.g., SAX, Pre Production, Production, Observation Report, GenAI Project)
+  const resolveCategory = (item, modeName) => {
+    if (!item || typeof item === 'string') {
+      switch ((modeName || '').toLowerCase()) {
+        case 'academic': return 'SAX';
+        case 'production': return 'PRODUCTION';
+        case 'research': return 'RESEARCH';
+        case 'genai lab':
+        case 'nail, genai lab': return 'GENAI';
+        default: return '';
+      }
+    }
+    if (item.taskType && item.taskType.trim()) {
+      return item.taskType.trim();
+    }
+    switch ((modeName || '').toLowerCase()) {
+      case 'academic': return 'SAX';
+      case 'production': return 'PRODUCTION';
+      case 'research': return 'RESEARCH';
+      case 'genai lab':
+      case 'nail, genai lab': return 'GENAI';
+      default: return '';
     }
   };
 
@@ -1405,7 +1515,37 @@ function StudentClient({ onSessionStateChange }) {
   // ----------------------------------------------------
   const renderBulletinBoard = () => {
     const theme = getModeTheme(selectedMode);
-    
+    const modeKey = (selectedMode || '').toLowerCase();
+
+    let items = [];
+    let sectionTitle = 'AVAILABLE LESSON TOPICS (SELECT ONE)';
+    let emptyMessage = 'No topics registered.';
+    let instructions = '';
+
+    if (modeKey === 'academic') {
+      items = activeAcad.topics || [];
+      sectionTitle = 'AVAILABLE LESSON TOPICS (SELECT ONE)';
+      emptyMessage = 'No topics registered for this batch.';
+      instructions = activeAcad.instructions || 'Follow faculty guidance.';
+    } else if (modeKey === 'production') {
+      items = activeProd.projects || [];
+      sectionTitle = 'AVAILABLE PRODUCTION PROJECTS (SELECT ONE)';
+      emptyMessage = 'No projects registered for this batch.';
+      instructions = activeProd.instructions || 'Execute assigned production shots and tasks.';
+    } else if (modeKey === 'research') {
+      items = resConfig?.assignmentTopics || [];
+      sectionTitle = 'AVAILABLE RESEARCH TOPICS (SELECT ONE)';
+      emptyMessage = 'No research topics registered.';
+      instructions = (resConfig?.instructions && !resConfig.instructions.includes('Research current state-of-the-art') && !resConfig.instructions.includes('industry papers') && !resConfig.instructions.includes('Conduct thorough observations')) 
+        ? resConfig.instructions 
+        : 'Follow faculty guidance.';
+    } else if (modeKey === 'genai lab' || modeKey === 'nail, genai lab') {
+      items = activeGenai.projects || [];
+      sectionTitle = 'AVAILABLE GENAI PROJECTS (SELECT ONE)';
+      emptyMessage = 'No GenAI projects registered for this batch.';
+      instructions = activeGenai.instructions || 'Execute independent GenAI workflows.';
+    }
+
     return (
       <div className={`p-6 rounded-2xl border ${theme.border} ${theme.bg} space-y-4 h-full flex flex-col justify-between`}>
         <div className="space-y-4">
@@ -1416,221 +1556,74 @@ function StudentClient({ onSessionStateChange }) {
             </span>
           </div>
 
-          {/* Academic view bulletin */}
-          {selectedMode.toLowerCase() === 'academic' && (
-            <div className="space-y-3.5 text-xs text-slate-400">
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Available Lesson Topics (Select One)</p>
-                <div className="space-y-2 mt-2 max-h-60 overflow-y-auto pr-1">
-                  {(activeAcad.topics || []).length === 0 ? (
-                    <span className="text-[10px] text-slate-600">No topics registered.</span>
-                  ) : (
-                    (activeAcad.topics || []).map((t, i) => {
-                      const name = typeof t === 'string' ? t : (t.name || 'Unnamed Topic');
-                      const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === t.timing)?.name || 'Session 1');
-                      const category = typeof t === 'string' ? '' : (t.taskType || '');
-                      const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
-                      return (
-                        <button
-                          type="button"
-                          key={i}
-                          onClick={() => {
-                            setSelectedTopicObj(t);
-                          }}
-                          className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
-                            isSelected
-                              ? 'bg-studio-accent-blue/20 border-studio-accent-blue ring-1 ring-studio-accent-blue text-white shadow-lg'
-                              : 'bg-studio-950/60 border-white/5 hover:border-white/20 text-slate-300'
-                          }`}
-                        >
-                          <div className="flex justify-between items-center w-full">
-                            <span className="font-bold text-[11px]">{name}</span>
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                              isSelected ? 'bg-studio-accent-blue text-white' : 'bg-white/10 text-slate-400'
-                            }`}>
-                              {isSelected ? '✓ Selected' : 'Select'}
-                            </span>
-                          </div>
-                          {(sessionName || category) && (
-                            <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono mt-0.5 flex-wrap">
-                              {category && <span className="text-studio-accent-blue font-bold uppercase inline-flex items-center justify-center">{category}</span>}
-                              <span className="px-1.5 py-0.5 rounded bg-studio-accent-blue/10 border border-studio-accent-blue/20 text-studio-accent-blue font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Instructions</p>
-                <p className="mt-1 leading-relaxed">{activeAcad.instructions || 'Follow faculty guidance.'}</p>
-              </div>
-            </div>
-          )}
+          <div className="space-y-3.5 text-xs text-slate-400">
+            <div>
+              <p className="font-bold text-white uppercase tracking-wide text-[10px]">
+                {sectionTitle}
+              </p>
+              <div className="space-y-2 mt-2 max-h-60 overflow-y-auto pr-1">
+                {items.length === 0 ? (
+                  <p className="text-[10px] text-slate-500 italic py-2">{emptyMessage}</p>
+                ) : (
+                  items.map((item, i) => {
+                    const name = typeof item === 'string' ? item : (item.name || 'Unnamed Topic');
+                    const sessionDisplay = resolveSessionDisplay(item, selectedBatch);
+                    const category = resolveCategory(item, selectedMode);
+                    const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
 
-          {/* Production view bulletin (Projects list) */}
-          {selectedMode.toLowerCase() === 'production' && (
-            <div className="space-y-3.5 text-xs text-slate-400">
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Active Batch Projects (Select One)</p>
-                <div className="space-y-2 mt-2 max-h-60 overflow-y-auto pr-1">
-                  {(activeProd.projects || []).length === 0 ? (
-                    <p className="text-[10px] text-slate-600 italic">No projects registered for this batch.</p>
-                  ) : (
-                    (activeProd.projects || []).map((proj, i) => {
-                      const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                      const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === proj.timing)?.name || 'Session 1');
-                      const category = typeof proj === 'string' ? '' : (proj.taskType || 'Production');
-                      const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
-                      return (
-                        <button
-                          type="button"
-                          key={i}
-                          onClick={() => {
-                            setSelectedTopicObj(proj);
-                          }}
-                          className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 text-[10px] ${
+                    return (
+                      <button
+                        type="button"
+                        key={i}
+                        onClick={() => {
+                          setSelectedTopicObj(item);
+                        }}
+                        className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 ${
+                          isSelected
+                            ? `${theme.selectedBg} ${theme.selectedBorder} ring-1 ${theme.selectedRing} text-white shadow-lg`
+                            : 'bg-studio-950/70 border-white/5 hover:border-white/20 text-slate-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center w-full gap-2">
+                          <span className="font-bold text-[11px] text-white tracking-wide truncate">{name}</span>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 transition-colors ${
                             isSelected
-                              ? 'bg-studio-accent-purple/20 border-studio-accent-purple ring-1 ring-studio-accent-purple text-white shadow-lg'
-                              : 'bg-studio-950 border-white/5 hover:border-white/20 text-slate-300'
-                          }`}
-                        >
-                          <div className="flex justify-between items-center w-full">
-                            <span className="font-bold text-[11px]">{name}</span>
-                            <div className="flex items-center gap-1.5">
-                              {category && <span className="px-1.5 py-0.5 rounded bg-studio-accent-purple/15 border border-studio-accent-purple/20 text-studio-accent-purple font-semibold text-[8px] uppercase tracking-wide leading-none shrink-0">{category}</span>}
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                isSelected ? 'bg-studio-accent-purple text-white' : 'bg-white/10 text-slate-400'
-                              }`}>
-                                {isSelected ? '✓ Selected' : 'Select'}
+                              ? theme.badgeSelectedBg
+                              : 'bg-slate-800/80 hover:bg-slate-700/80 text-slate-300'
+                          }`}>
+                            {isSelected ? '✓ Selected' : 'Select'}
+                          </span>
+                        </div>
+                        {(category || sessionDisplay) && (
+                          <div className="flex items-center gap-2 text-[9px] font-mono mt-0.5 flex-wrap">
+                            {category && (
+                              <span className={`${theme.categoryText} font-bold uppercase inline-flex items-center justify-center shrink-0`}>
+                                {category}
                               </span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-medium flex-wrap">
-                            <span className="px-1.5 py-0.5 rounded bg-studio-accent-purple/10 border border-studio-accent-purple/20 text-studio-accent-purple font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Instructions</p>
-                <p className="mt-1 leading-relaxed">{activeProd.instructions || 'Execute assigned production shots and tasks.'}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Research view bulletin */}
-          {selectedMode.toLowerCase() === 'research' && resConfig && (
-            <div className="space-y-3.5 text-xs text-slate-400">
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Observations & Analysis Topics (Select One)</p>
-                <div className="space-y-2 mt-2 max-h-60 overflow-y-auto pr-1">
-                  {(resConfig.assignmentTopics || []).length === 0 ? (
-                    <span className="text-[10px] text-slate-600">No topics registered.</span>
-                  ) : (
-                    (resConfig.assignmentTopics || []).map((t, i) => {
-                      const name = typeof t === 'string' ? t : (t.name || 'Unnamed Topic');
-                      const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === t.timing)?.name || 'Session 1');
-                      const category = typeof t === 'string' ? '' : (t.taskType || '');
-                      const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
-                      return (
-                        <button
-                          type="button"
-                          key={i}
-                          onClick={() => {
-                            setSelectedTopicObj(t);
-                          }}
-                          className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
-                            isSelected
-                              ? 'bg-emerald-500/20 border-emerald-500 ring-1 ring-emerald-500 text-white shadow-lg'
-                              : 'bg-studio-950/60 border-white/5 hover:border-white/20 text-slate-300'
-                          }`}
-                        >
-                          <div className="flex justify-between items-center w-full">
-                            <span className="font-bold text-[11px]">{name}</span>
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                              isSelected ? 'bg-emerald-500 text-black font-extrabold' : 'bg-white/10 text-slate-400'
-                            }`}>
-                              {isSelected ? '✓ Selected' : 'Select'}
-                            </span>
-                          </div>
-                          {(sessionName || category) && (
-                            <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono mt-0.5 flex-wrap">
-                              {category && <span className="text-emerald-400 font-bold uppercase inline-flex items-center justify-center">{category}</span>}
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Submission brief</p>
-                <p className="mt-1 leading-relaxed text-slate-400">{(resConfig.instructions && !resConfig.instructions.includes('Research current state-of-the-art') && !resConfig.instructions.includes('industry papers') && !resConfig.instructions.includes('Conduct thorough observations')) ? resConfig.instructions : 'No instructions provided.'}</p>
-              </div>
-            </div>
-          )}
-
-          {/* GenAI Lab view bulletin */}
-          {(selectedMode.toLowerCase() === 'nail, genai lab' || selectedMode.toLowerCase() === 'genai lab') && (
-            <div className="space-y-3.5 text-xs text-slate-400">
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Active Batch GenAI Projects (Select One)</p>
-                <div className="space-y-2 mt-2 max-h-60 overflow-y-auto pr-1">
-                  {(activeGenai.projects || []).length === 0 ? (
-                    <p className="text-[10px] text-slate-600 italic">No projects registered for this batch.</p>
-                  ) : (
-                    (activeGenai.projects || []).map((proj, i) => {
-                      const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                      const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || (batches.find(b => b.batchName === selectedBatch)?.sessionTimes || []).find(s => s.timing === proj.timing)?.name || 'Session 1');
-                      const category = typeof proj === 'string' ? '' : (proj.taskType || 'GenAI');
-                      const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
-                      return (
-                        <button
-                          type="button"
-                          key={i}
-                          onClick={() => {
-                            setSelectedTopicObj(proj);
-                          }}
-                          className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 text-[10px] ${
-                            isSelected
-                              ? 'bg-amber-500/20 border-amber-500 ring-1 ring-amber-500 text-white shadow-lg'
-                              : 'bg-studio-950 border-white/5 hover:border-white/20 text-slate-300'
-                          }`}
-                        >
-                          <div className="flex justify-between items-center w-full">
-                            <span className="font-bold text-[11px]">{name}</span>
-                            <div className="flex items-center gap-1.5">
-                              {category && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/20 text-amber-400 font-semibold text-[8px] uppercase tracking-wide leading-none shrink-0">{category}</span>}
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                isSelected ? 'bg-amber-500 text-black font-extrabold' : 'bg-white/10 text-slate-400'
-                              }`}>
-                                {isSelected ? '✓ Selected' : 'Select'}
+                            )}
+                            {sessionDisplay && (
+                              <span className={`px-2 py-0.5 rounded border ${theme.pillBorder} ${theme.pillBg} ${theme.pillText} font-bold text-[8px] inline-flex items-center justify-center`}>
+                                {sessionDisplay}
                               </span>
-                            </div>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-medium flex-wrap">
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 font-bold text-[8px] inline-flex items-center justify-center">{sessionName}</span>
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-              <div>
-                <p className="font-bold text-white uppercase tracking-wide text-[10px] text-slate-500">Instructions</p>
-                <p className="mt-1 leading-relaxed">{activeGenai.instructions || 'Execute independent GenAI workflows.'}</p>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
               </div>
             </div>
-          )}
+
+            <div className="pt-1">
+              <p className="font-bold text-white uppercase tracking-wide text-[10px]">
+                Instructions
+              </p>
+              <p className="mt-1 text-slate-300 text-xs leading-relaxed">
+                {instructions || 'Follow faculty guidance.'}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="flex items-start gap-2 text-[10px] text-slate-500 leading-snug border-t border-white/5 pt-4">
@@ -1754,7 +1747,7 @@ function StudentClient({ onSessionStateChange }) {
                 <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Active Workspace Student</span>
                 <h4 className="font-bold text-white text-base leading-tight">{activeSession.studentName}</h4>
                 <p className="text-[11px] text-slate-550 font-medium">
-                  {activeSession.studentBatch} | <span className="text-studio-accent-purple font-semibold">{activeSession.mode}</span>
+                  {activeSession.studentBatch} | <span className={`${theme.text} font-semibold`}>{activeSession.mode}</span>
                 </p>
               </div>
 
@@ -1762,7 +1755,7 @@ function StudentClient({ onSessionStateChange }) {
               <div className="bg-studio-900/40 border border-white/5 p-4 rounded-2xl text-center space-y-3 shadow-inner">
                 <div className="space-y-0.5">
                   <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest flex items-center justify-center gap-1">
-                    <Clock className="h-3.5 w-3.5 text-studio-accent-purple" />
+                    <Clock className={`h-3.5 w-3.5 ${theme.text}`} />
                     Elapsed Work Time
                   </span>
                   <p className="text-3xl font-extrabold font-mono text-white tracking-widest">
@@ -1843,89 +1836,64 @@ function StudentClient({ onSessionStateChange }) {
 
               {/* Mode Guideline Bulletin Reference */}
               <div className="border-t border-white/5 pt-3 space-y-2">
-                <span className="text-[9px] text-slate-550 font-bold uppercase tracking-wider block">Guideline Bulletin</span>
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Guideline Bulletin</span>
                 <div className="max-h-36 overflow-y-auto pr-1">
-                  {activeSession.mode.toLowerCase() === 'academic' && (
-                    <div className="space-y-2 text-[11px] text-slate-400 leading-relaxed">
-                      <p className="mt-1">{activeAcad.instructions}</p>
-                      <div className="space-y-1.5 mt-1.5">
-                        {(activeAcad.topics || []).map((t, i) => {
-                          const name = typeof t === 'string' ? t : t.name;
-                          const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || 'Session 1');
-                          const category = typeof t === 'string' ? '' : t.taskType;
-                          return (
-                            <div key={i} className="p-2 bg-studio-950/60 border border-white/5 rounded-lg flex flex-col gap-1">
-                              <span className="font-bold text-white text-[10px]">{name}</span>
-                              <div className="flex gap-2 text-[8px] text-slate-500 font-mono">
-                                {category && <span className="text-studio-accent-blue font-bold uppercase">{category}</span>}
-                                <span className="text-studio-accent-blue font-bold">{sessionName}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                  {(() => {
+                    const modeKey = (activeSession.mode || '').toLowerCase();
+                    let items = [];
+                    let instructions = '';
 
-                    </div>
-                  )}
-                  {activeSession.mode.toLowerCase() === 'production' && (
-                    <div className="space-y-1.5 text-[11px] text-slate-400">
-                      <p className="mt-1">{activeProd.instructions || 'Execute assigned production shots and tasks.'}</p>
-                      {(activeProd.projects || []).map((proj, idx) => {
-                        const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                        const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || 'Session 1');
-                        const category = typeof proj === 'string' ? '' : (proj.taskType || 'Production');
-                        return (
-                          <div key={idx} className="p-2.5 bg-studio-950 border border-white/5 rounded flex flex-col gap-0.5">
-                            <span className="font-bold text-white text-xs">{name}</span>
-                            <div className="flex gap-2 text-[9px] text-studio-accent-purple">
-                              <span>{category}</span>
-                              <span className="font-bold">| {sessionName}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {activeSession.mode.toLowerCase() === 'research' && resConfig && (
-                    <div className="space-y-2 text-[11px] text-slate-400 leading-relaxed">
-                      <p className="mt-1">{resConfig.instructions}</p>
-                      <div className="space-y-1.5 mt-1.5">
-                        {(resConfig.assignmentTopics || []).map((t, i) => {
-                          const name = typeof t === 'string' ? t : t.name;
-                          const sessionName = typeof t === 'string' ? 'Session 1' : (t.sessionName || 'Session 1');
-                          const category = typeof t === 'string' ? '' : t.taskType;
-                          return (
-                            <div key={i} className="p-2 bg-studio-950/60 border border-white/5 rounded-lg flex flex-col gap-1">
-                              <span className="font-bold text-white text-[10px]">{name}</span>
-                              <div className="flex gap-2 text-[8px] text-slate-500 font-mono">
-                                {category && <span className="text-emerald-400 font-bold uppercase">{category}</span>}
-                                <span className="text-emerald-400 font-bold">{sessionName}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
+                    if (modeKey === 'academic') {
+                      items = activeAcad.topics || [];
+                      instructions = activeAcad.instructions;
+                    } else if (modeKey === 'production') {
+                      items = activeProd.projects || [];
+                      instructions = activeProd.instructions || 'Execute assigned production shots and tasks.';
+                    } else if (modeKey === 'research') {
+                      items = resConfig?.assignmentTopics || [];
+                      instructions = (resConfig?.instructions && !resConfig.instructions.includes('Research current state-of-the-art') && !resConfig.instructions.includes('industry papers') && !resConfig.instructions.includes('Conduct thorough observations')) ? resConfig.instructions : '';
+                    } else if (modeKey === 'genai lab' || modeKey === 'nail, genai lab') {
+                      items = activeGenai.projects || [];
+                      instructions = activeGenai.instructions || 'Execute independent GenAI workflows.';
+                    }
+
+                    return (
+                      <div className="space-y-2 text-[11px] text-slate-400 leading-relaxed">
+                        {instructions && <p className="mt-1 text-slate-300 text-xs">{instructions}</p>}
+                        <div className="space-y-1.5 mt-1.5">
+                          {items.length === 0 ? (
+                            <span className="text-[10px] text-slate-500 italic">No topics registered.</span>
+                          ) : (
+                            items.map((item, idx) => {
+                              const name = typeof item === 'string' ? item : (item.name || 'Unnamed Topic');
+                              const sessionDisplay = resolveSessionDisplay(item, activeSession.studentBatch);
+                              const category = resolveCategory(item, activeSession.mode);
+
+                              return (
+                                <div key={idx} className="p-2 bg-studio-950/70 border border-white/5 rounded-lg flex flex-col gap-1">
+                                  <span className="font-bold text-white text-[10px]">{name}</span>
+                                  {(category || sessionDisplay) && (
+                                    <div className="flex items-center gap-2 text-[8px] font-mono mt-0.5 flex-wrap">
+                                      {category && (
+                                        <span className={`${theme.categoryText} font-bold uppercase inline-flex items-center justify-center shrink-0`}>
+                                          {category}
+                                        </span>
+                                      )}
+                                      {sessionDisplay && (
+                                        <span className={`px-1.5 py-0.5 rounded border ${theme.pillBorder} ${theme.pillBg} ${theme.pillText} font-bold text-[8px] inline-flex items-center justify-center`}>
+                                          {sessionDisplay}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                  {(activeSession.mode.toLowerCase() === 'genai lab' || activeSession.mode.toLowerCase() === 'nail, genai lab') && (
-                    <div className="space-y-1.5 text-[11px] text-slate-400">
-                      <p className="mt-1">{activeGenai.instructions || 'Execute independent GenAI workflows.'}</p>
-                      {(activeGenai.projects || []).map((proj, idx) => {
-                        const name = typeof proj === 'string' ? proj : (proj.name || 'Unnamed Project');
-                        const sessionName = typeof proj === 'string' ? 'Session 1' : (proj.sessionName || 'Session 1');
-                        const category = typeof proj === 'string' ? '' : (proj.taskType || 'GenAI');
-                        return (
-                          <div key={idx} className="p-2.5 bg-studio-950 border border-white/5 rounded flex flex-col gap-0.5">
-                            <span className="font-bold text-white text-xs">{name}</span>
-                            <div className="flex gap-2 text-[9px] text-amber-500">
-                              <span>{category}</span>
-                              <span className="font-bold">| {sessionName}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -2331,18 +2299,6 @@ function StudentClient({ onSessionStateChange }) {
                     )}
                   </select>
                 )}
-                {(() => {
-                  const currentWs = workstationsList.find(w => w.name === selectedPC);
-                  if (!currentWs || (!currentWs.gpu && !currentWs.ram && !currentWs.vram && !currentWs.processor)) return null;
-                  return (
-                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 bg-studio-950/60 p-2 rounded-lg border border-white/5 font-mono mt-1">
-                      {currentWs.gpu && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-emerald-400 font-semibold">{currentWs.gpu}</span>}
-                      {currentWs.vram && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-amber-400">{currentWs.vram} VRAM</span>}
-                      {currentWs.ram && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-studio-accent-blue">{currentWs.ram} RAM</span>}
-                      {currentWs.processor && <span className="bg-studio-900 px-1.5 py-0.5 rounded border border-white/5 text-purple-300">{currentWs.processor}</span>}
-                    </div>
-                  );
-                })()}
               </div>
 
               {/* Student Name */}
@@ -2528,8 +2484,12 @@ function StudentClient({ onSessionStateChange }) {
 
       {/* MAIN WINDOW SHUTDOWN/RESTART CONFIRMATION MODAL */}
       {confirmMainShutdown && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-studio-950/95 backdrop-blur-md pointer-events-auto">
-          <div className={`w-full max-w-sm glass-panel-glow p-6 rounded-2xl shadow-glass-glow flex flex-col items-center text-center space-y-4 animate-scale-in ${
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-transparent pointer-events-auto">
+          <div 
+            className="absolute inset-0" 
+            onClick={() => setConfirmMainShutdown(false)} 
+          />
+          <div className={`relative z-10 w-full max-w-sm glass-panel-glow bg-studio-900/95 p-6 rounded-2xl shadow-glass-glow flex flex-col items-center text-center space-y-4 animate-scale-in ${
             powerActionType === 'restart' ? 'border-amber-500/40' : 'border-rose-500/40'
           }`}>
             <div className={`h-12 w-12 rounded-full flex items-center justify-center border shadow-lg ${
@@ -2587,7 +2547,7 @@ function StudentClient({ onSessionStateChange }) {
 
       {/* About Pivot / Help Dialogue Box Modal */}
       {showAboutModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-studio-950/80 backdrop-blur-md p-4 animate-fade-in pointer-events-auto">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-transparent p-4 animate-fade-in pointer-events-auto">
           {/* Backdrop click to close */}
           <div 
             className="absolute inset-0" 
