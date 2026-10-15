@@ -166,6 +166,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    icon: path.join(__dirname, 'icon.png'),
     frame: !isStudentMode, // Frameless in student mode to support transparency
     transparent: isStudentMode, // Transparent window in student mode
     resizable: !isStudentMode, // Lock student widget so it is not resizable
@@ -572,6 +573,7 @@ function createNotificationWindow(message) {
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
+    icon: path.join(__dirname, 'icon.png'),
     frame: false,
     transparent: true,
     alwaysOnTop: true,
