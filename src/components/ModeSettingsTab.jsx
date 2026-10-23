@@ -317,7 +317,7 @@ function ModeSettingsTab() {
   const [selectedBatch, setSelectedBatch] = useState('');
   const [academicSettingsList, setAcademicSettingsList] = useState([]);
   const [productionSettingsList, setProductionSettingsList] = useState([]);
-  const [research, setResearch] = useState(null);
+  const [researchSettingsList, setResearchSettingsList] = useState([]);
   const [genaiSettingsList, setGenaiSettingsList] = useState([]);
 
   const [showSessionsModal, setShowSessionsModal] = useState(false);
@@ -575,23 +575,7 @@ function ModeSettingsTab() {
     });
 
     const unsubResearch = subscribeCollection('settings_research', (data) => {
-      if (data && data.length > 0) {
-        setResearch(data[0]);
-        let inst = data[0].instructions || '';
-        if (inst.includes('Research current state-of-the-art') || inst.includes('industry papers') || inst.includes('Conduct thorough observations')) {
-          inst = '';
-          updateDocument('settings_research', data[0].id, { instructions: '' }).catch(() => {});
-        }
-        setResearchInstructions(inst);
-      } else {
-        const defaultResearch = {
-          id: 'config',
-          assignmentTopics: ['AI Rendering Pipelines in Unreal Engine 5', 'NeRF vs Traditional Photogrammetry', 'Real-time Raytracing Optimization'],
-          instructions: ''
-        };
-        setResearch(defaultResearch);
-        setResearchInstructions('');
-      }
+      setResearchSettingsList(data || []);
       loadedResearch = true;
       checkAllLoaded();
     });
@@ -649,18 +633,47 @@ function ModeSettingsTab() {
       setProductionInstructions('');
       setLocalProductionProjects([]);
     }
-  }, [selectedBatch, academicSettingsList, genaiSettingsList, productionSettingsList]);
 
-  useEffect(() => {
-    if (research) {
-      let inst = research.instructions || '';
+    const activeRes = researchSettingsList.find(s => s.id === selectedBatch);
+    if (activeRes) {
+      let inst = activeRes.instructions || '';
       if (inst.includes('Research current state-of-the-art') || inst.includes('industry papers') || inst.includes('Conduct thorough observations')) {
         inst = '';
       }
       setResearchInstructions(inst);
-      setLocalResearchTopics(research.assignmentTopics || []);
+      const topics = (activeRes.assignmentTopics || []).map(topic => {
+        if (typeof topic === 'object' && topic !== null) {
+          if (topic.taskType === 'Analysis Report') {
+            return { ...topic, taskType: 'General' };
+          }
+        }
+        return topic;
+      });
+      setLocalResearchTopics(topics);
+    } else {
+      // If legacy 'config' exists and selectedBatch is 'All Dept', allow fallback once
+      const legacyConfig = selectedBatch === 'All Dept' ? researchSettingsList.find(s => s.id === 'config') : null;
+      if (legacyConfig) {
+        let inst = legacyConfig.instructions || '';
+        if (inst.includes('Research current state-of-the-art') || inst.includes('industry papers') || inst.includes('Conduct thorough observations')) {
+          inst = '';
+        }
+        setResearchInstructions(inst);
+        const topics = (legacyConfig.assignmentTopics || []).map(topic => {
+          if (typeof topic === 'object' && topic !== null) {
+            if (topic.taskType === 'Analysis Report') {
+              return { ...topic, taskType: 'General' };
+            }
+          }
+          return topic;
+        });
+        setLocalResearchTopics(topics);
+      } else {
+        setResearchInstructions('');
+        setLocalResearchTopics([]);
+      }
     }
-  }, [research]);
+  }, [selectedBatch, academicSettingsList, genaiSettingsList, productionSettingsList, researchSettingsList]);
 
   const currentAcademic = academicSettingsList.find(s => s.id === selectedBatch) || {
     id: selectedBatch,
@@ -818,7 +831,7 @@ function ModeSettingsTab() {
   // ----------------------------------------------------
   const handleAddResearchTopic = (e) => {
     e.preventDefault();
-    if (!newResearchTopic.trim() || !research) return;
+    if (!newResearchTopic.trim() || !selectedBatch) return;
 
     const selectedNames = newResearchTopicSessions.length > 0 ? newResearchTopicSessions : [availableSessions[0]?.name || 'Session 1'];
     const timing = getTopicCombinedTiming(selectedNames, availableSessions);
@@ -837,15 +850,15 @@ function ModeSettingsTab() {
   };
 
   const handleDeleteResearchTopic = (topicToDelete) => {
-    if (!research) return;
+    if (!selectedBatch) return;
     setLocalResearchTopics(localResearchTopics.filter(t => (typeof t === 'string' ? t : t.name) !== topicToDelete));
   };
 
   const handleSaveResearchSettings = async () => {
-    if (!research) return;
+    if (!selectedBatch) return;
     setSavingResearch(true);
     try {
-      await updateDocument('settings_research', research.id, {
+      await updateDocument('settings_research', selectedBatch, {
         assignmentTopics: localResearchTopics,
         instructions: researchInstructions,
         allottedHours: getTopicsTotalAllocatedHours(localResearchTopics)
@@ -922,6 +935,7 @@ function ModeSettingsTab() {
 
       // Research
       case 'Observation Report': return 'bg-teal-500/10 border-teal-500/20 text-teal-400';
+      case 'General':
       case 'Analysis Report': return 'bg-pink-500/10 border-pink-500/20 text-pink-400';
       case 'Review': return 'bg-orange-500/10 border-orange-500/20 text-orange-400';
       case 'Literature Review': return 'bg-teal-500/10 border-teal-500/20 text-teal-400';
@@ -1744,7 +1758,7 @@ function ModeSettingsTab() {
                     className="w-full px-2 py-1.5 rounded-lg studio-input text-slate-100 text-xs font-semibold select-dark"
                   >
                     <option value="Observation Report">Observation Report</option>
-                    <option value="Analysis Report">Analysis Report</option>
+                    <option value="General">General</option>
                     <option value="Review">Review</option>
                   </select>
                 </div>
@@ -1778,7 +1792,8 @@ function ModeSettingsTab() {
                 ) : (
                   localResearchTopics.map((topic, idx) => {
                     const name = typeof topic === 'string' ? topic : topic.name;
-                    const category = typeof topic === 'string' ? 'Observation Report' : (topic.taskType || 'Observation Report');
+                    const rawCategory = typeof topic === 'string' ? 'Observation Report' : (topic.taskType || 'Observation Report');
+                    const category = rawCategory === 'Analysis Report' ? 'General' : rawCategory;
                     const sessionNamesArr = typeof topic === 'string'
                       ? ['Session 1']
                       : (topic.sessionNames || (topic.sessionName ? topic.sessionName.split(', ') : [(availableSessions.find(s => s.timing === topic.timing)?.name || 'Session 1')]));
@@ -1817,7 +1832,7 @@ function ModeSettingsTab() {
                                 className="px-2 py-1 rounded-lg studio-input text-slate-100 text-[10px] font-semibold select-dark w-1/3"
                               >
                                 <option value="Observation Report">Observation Report</option>
-                                <option value="Analysis Report">Analysis Report</option>
+                                <option value="General">General</option>
                                 <option value="Review">Review</option>
                               </select>
                               <div className="flex-1 flex flex-wrap gap-1 items-center bg-studio-900 p-1.5 rounded-lg border border-white/5 max-h-20 overflow-y-auto">

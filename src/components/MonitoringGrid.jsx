@@ -20,6 +20,82 @@ import {
   RefreshCw
 } from 'lucide-react';
 
+const DEFAULT_SESSIONS = [
+  { name: 'Session 1', timing: '09:30 AM - 10:25 AM' },
+  { name: 'Session 2', timing: '10:25 AM - 11:20 AM' },
+  { name: 'Session 3', timing: '11:35 AM - 12:30 PM' },
+  { name: 'Session 4', timing: '01:15 PM - 02:10 PM' },
+  { name: 'Session 5', timing: '02:10 PM - 03:05 PM' },
+  { name: 'Session 6', timing: '03:05 PM - 04:15 PM' },
+  { name: 'Session 7', timing: '04:15 PM - 06:15 PM' }
+];
+
+const calculateSessionDuration = (timing) => {
+  if (!timing || typeof timing !== 'string') return 0;
+  const parts = timing.split(/\s*[-–to]+\s*/i);
+  if (parts.length !== 2) {
+    const hrMatch = timing.match(/^(\d+(?:\.\d+)?)\s*(?:hr|hours?|h|mins?|m)?$/i);
+    if (hrMatch) {
+      let n = Number(hrMatch[1]);
+      if (/mins?|m/i.test(timing)) return Math.round(n);
+      return Math.round(n * 60);
+    }
+    return 0;
+  }
+  
+  const parseTime = (str) => {
+    const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ampm = m[3] ? m[3].toUpperCase() : null;
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+  
+  const s = parseTime(parts[0]);
+  const e = parseTime(parts[1]);
+  if (s !== null && e !== null) {
+    let diff = e - s;
+    if (diff < 0) diff += 24 * 60;
+    return diff;
+  }
+  return 0;
+};
+
+const normalizeSessions = (sessions) => {
+  if (!sessions || !Array.isArray(sessions) || sessions.length === 0) return DEFAULT_SESSIONS;
+  return sessions.map((s, idx) => {
+    if (typeof s === 'string') {
+      return { name: `Session ${idx + 1}`, timing: s };
+    }
+    if (s && typeof s === 'object') {
+      return {
+        name: s.name || `Session ${idx + 1}`,
+        timing: s.timing || s.time || ''
+      };
+    }
+    return { name: `Session ${idx + 1}`, timing: '' };
+  });
+};
+
+const calculateCombinedSessionsDuration = (sessionNames, availableSessions) => {
+  if (!sessionNames) return 0;
+  const namesArr = Array.isArray(sessionNames) ? sessionNames : [sessionNames];
+  if (namesArr.length === 0) return 0;
+  let totalMins = 0;
+  const normAvailable = normalizeSessions(availableSessions);
+  for (const name of namesArr) {
+    if (!name) continue;
+    const sObj = normAvailable.find(s => s && s.name && s.name.trim().toLowerCase() === String(name).trim().toLowerCase());
+    if (sObj && sObj.timing) {
+      totalMins += calculateSessionDuration(sObj.timing);
+    }
+  }
+  return totalMins;
+};
+
 const getSessionTimesTotalHours = (batch) => {
   if (!batch || !batch.useSessionTimes || !batch.sessionTimes || !Array.isArray(batch.sessionTimes)) return 0;
   
@@ -70,6 +146,9 @@ function MonitoringGrid() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [batchesList, setBatchesList] = useState([]);
   const [academicSettingsList, setAcademicSettingsList] = useState([]);
+  const [productionSettingsList, setProductionSettingsList] = useState([]);
+  const [researchSettingsList, setResearchSettingsList] = useState([]);
+  const [genaiSettingsList, setGenaiSettingsList] = useState([]);
 
   // Messaging states
   const [messagingPC, setMessagingPC] = useState(null);
@@ -161,12 +240,27 @@ function MonitoringGrid() {
       setAcademicSettingsList(data || []);
     });
 
+    const unsubProd = subscribeCollection('settings_production', (data) => {
+      setProductionSettingsList(data || []);
+    });
+
+    const unsubRes = subscribeCollection('settings_research', (data) => {
+      setResearchSettingsList(data || []);
+    });
+
+    const unsubGenai = subscribeCollection('settings_genai', (data) => {
+      setGenaiSettingsList(data || []);
+    });
+
     return () => {
       unsubComps();
       unsubLogs();
       unsubStudents();
       unsubBatches();
       unsubAcad();
+      unsubProd();
+      unsubRes();
+      unsubGenai();
     };
   }, []);
 
@@ -368,28 +462,30 @@ function MonitoringGrid() {
   const studentLogs = logs.filter(log => (log.studentId || '').toLowerCase() === (selectedStudentHistory || '').toLowerCase());
   const currentLogs = historyTab === 'student' ? studentLogs : pcLogs;
 
-  // Date filter logic
-  const filteredLogs = currentLogs.filter(log => {
-    if (!log.startTime) return false;
-    
+  // Helper: extract local YYYY-MM-DD from any date representation
+  const getLogLocalDateKey = (startTimeVal) => {
+    if (!startTimeVal) return null;
     let dateObj;
-    if (log.startTime && typeof log.startTime === 'object' && log.startTime.seconds !== undefined) {
-      dateObj = new Date(log.startTime.seconds * 1000);
-    } else if (log.startTime && typeof log.startTime.toDate === 'function') {
-      dateObj = log.startTime.toDate();
+    if (typeof startTimeVal === 'object' && startTimeVal.seconds !== undefined) {
+      dateObj = new Date(startTimeVal.seconds * 1000);
+    } else if (typeof startTimeVal === 'object' && typeof startTimeVal.toDate === 'function') {
+      dateObj = startTimeVal.toDate();
     } else {
-      dateObj = new Date(log.startTime);
+      dateObj = new Date(startTimeVal);
     }
 
-    if (isNaN(dateObj.getTime())) return false;
+    if (isNaN(dateObj.getTime())) return null;
 
-    // Convert to local YYYY-MM-DD string to align with date input fields
     const localYear = dateObj.getFullYear();
     const localMonth = String(dateObj.getMonth() + 1).padStart(2, '0');
     const localDay = String(dateObj.getDate()).padStart(2, '0');
-    const logLocalDateStr = `${localYear}-${localMonth}-${localDay}`;
+    return `${localYear}-${localMonth}-${localDay}`;
+  };
 
-    return logLocalDateStr >= startDate && logLocalDateStr <= endDate;
+  // Date filter logic
+  const filteredLogs = currentLogs.filter(log => {
+    const logLocalDateStr = getLogLocalDateKey(log.startTime);
+    return logLocalDateStr && logLocalDateStr >= startDate && logLocalDateStr <= endDate;
   });
 
   const lastLogin = currentLogs[0] || null; // Most recent session details
@@ -490,6 +586,208 @@ function MonitoringGrid() {
     return (!isNaN(n) && n > 0) ? n : null;
   };
 
+  // Calculate allotted seconds for a single session log based on HOD's allocated session(s)
+  const getLogAllottedSecs = (log, studentInfoParam, batchInfoParam) => {
+    if (!log) return 0;
+    // 1. Explicit allotted time saved directly on log
+    if (log.allottedSecs && !isNaN(log.allottedSecs) && Number(log.allottedSecs) > 0) {
+      return Number(log.allottedSecs);
+    }
+    if (log.allottedMinutes && !isNaN(log.allottedMinutes) && Number(log.allottedMinutes) > 0) {
+      return Math.round(Number(log.allottedMinutes) * 60);
+    }
+    if (log.allottedHours && !isNaN(log.allottedHours) && Number(log.allottedHours) > 0) {
+      return Math.round(Number(log.allottedHours) * 3600);
+    }
+
+    // 2. Resolve batch & available sessions
+    const logBatchName = (log.batch || studentInfoParam?.batch || '').trim().toLowerCase();
+    const targetBatch = batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === logBatchName) || batchInfoParam;
+    const rawSessions = (targetBatch?.sessionTimes && Array.isArray(targetBatch.sessionTimes) && targetBatch.sessionTimes.length > 0)
+      ? targetBatch.sessionTimes
+      : DEFAULT_SESSIONS;
+    const availableSessions = normalizeSessions(rawSessions);
+
+    // If sessionNames or sessionName on log
+    const sessionNames = Array.isArray(log.sessionNames) && log.sessionNames.length > 0
+      ? log.sessionNames
+      : (log.sessionName ? String(log.sessionName).split(',').map(s => s.trim()).filter(Boolean) : null);
+
+    if (sessionNames && sessionNames.length > 0) {
+      const mins = calculateCombinedSessionsDuration(sessionNames, availableSessions);
+      if (mins > 0) return mins * 60;
+    }
+
+    // 3. Lookup topic in mode settings
+    const topicName = (log.topicName || log.taskDesc || '').trim().toLowerCase();
+    if (topicName) {
+      const mode = (log.mode || '').toLowerCase();
+      let matchedTopic = null;
+
+      if (mode.includes('academic') || !mode) {
+        const acad = academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === logBatchName || (a.batchName || '').trim().toLowerCase() === logBatchName);
+        matchedTopic = (acad?.topics || []).find(t => (typeof t === 'string' ? t : (t.name || '')).trim().toLowerCase() === topicName);
+      }
+      if (!matchedTopic && (mode.includes('prod') || !mode)) {
+        const prod = productionSettingsList.find(p => (p.id || '').trim().toLowerCase() === logBatchName || (p.batchName || '').trim().toLowerCase() === logBatchName);
+        matchedTopic = (prod?.projects || []).find(p => (typeof p === 'string' ? p : (p.name || '')).trim().toLowerCase() === topicName);
+      }
+      if (!matchedTopic && (mode.includes('res') || !mode)) {
+        const res = researchSettingsList.find(r => (r.id || '').trim().toLowerCase() === logBatchName || (r.batchName || '').trim().toLowerCase() === logBatchName) || researchSettingsList?.[0];
+        matchedTopic = (res?.assignmentTopics || []).find(t => (typeof t === 'string' ? t : (t.name || '')).trim().toLowerCase() === topicName);
+      }
+      if (!matchedTopic && (mode.includes('genai') || !mode)) {
+        const gen = genaiSettingsList.find(g => (g.id || '').trim().toLowerCase() === logBatchName || (g.batchName || '').trim().toLowerCase() === logBatchName);
+        matchedTopic = (gen?.projects || []).find(p => (typeof p === 'string' ? p : (p.name || '')).trim().toLowerCase() === topicName);
+      }
+
+      if (matchedTopic && typeof matchedTopic === 'object') {
+        const tSessionNames = Array.isArray(matchedTopic.sessionNames) && matchedTopic.sessionNames.length > 0
+          ? matchedTopic.sessionNames
+          : (matchedTopic.sessionName ? String(matchedTopic.sessionName).split(',').map(s => s.trim()).filter(Boolean) : null);
+        if (tSessionNames && tSessionNames.length > 0) {
+          const mins = calculateCombinedSessionsDuration(tSessionNames, availableSessions);
+          if (mins > 0) return mins * 60;
+        }
+        if (matchedTopic.timing) {
+          const mins = calculateSessionDuration(matchedTopic.timing);
+          if (mins > 0) return mins * 60;
+        }
+        if (matchedTopic.allottedHours || matchedTopic.durationHours) {
+          const val = Number(matchedTopic.allottedHours || matchedTopic.durationHours);
+          if (!isNaN(val) && val > 0) return Math.round(val * 3600);
+        }
+      }
+    }
+
+    // 4. Fallback: single session duration from available sessions (e.g. Session 1), NOT the whole day!
+    if (availableSessions.length > 0 && availableSessions[0].timing) {
+      const s1Dur = calculateSessionDuration(availableSessions[0].timing);
+      if (s1Dur > 0) return s1Dur * 60;
+    }
+    return 3300; // 55 mins default fallback
+  };
+
+  // Resolve session name display for a log (e.g., "Session 1" or "Session 1, Session 2")
+  const resolveLogSessionName = (log, studentInfoParam, batchInfoParam) => {
+    if (log.sessionName && typeof log.sessionName === 'string' && log.sessionName.trim()) {
+      return log.sessionName.trim();
+    }
+    if (Array.isArray(log.sessionNames) && log.sessionNames.length > 0) {
+      return log.sessionNames.join(', ');
+    }
+    const logBatchName = (log.batch || studentInfoParam?.batch || '').trim().toLowerCase();
+    const topicName = (log.topicName || log.taskDesc || '').trim().toLowerCase();
+    if (topicName) {
+      const acad = academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === logBatchName || (a.batchName || '').trim().toLowerCase() === logBatchName);
+      const matchedTopic = (acad?.topics || []).find(t => (typeof t === 'string' ? t : (t.name || '')).trim().toLowerCase() === topicName);
+      if (matchedTopic && typeof matchedTopic === 'object') {
+        if (Array.isArray(matchedTopic.sessionNames) && matchedTopic.sessionNames.length > 0) {
+          return matchedTopic.sessionNames.join(', ');
+        }
+        if (matchedTopic.sessionName) return matchedTopic.sessionName;
+      }
+    }
+    return 'Session 1';
+  };
+
+  // Helper to format long session lists (e.g. "Session 1, Session 2, Session 3, Session 4, Session 5, Session 6")
+  // into a clean, compact label like "Session 1–6" or "6 Sessions" so workstation grid cards stay aligned
+  const formatCompactSession = (sessionStr) => {
+    if (!sessionStr || typeof sessionStr !== 'string') return '';
+    const trimmed = sessionStr.trim();
+    if (!trimmed.includes(',')) return trimmed;
+
+    const parts = trimmed.split(',').map(s => s.trim()).filter(Boolean);
+    if (parts.length <= 1) return trimmed;
+
+    // Check if parts match "Session <number>"
+    const parsed = parts.map(p => {
+      const m = p.match(/^session\s*(\d+)$/i);
+      return m ? { prefix: p.match(/^([a-zA-Z\s]+)/)[1].trim(), num: parseInt(m[1], 10) } : null;
+    });
+
+    const allNumberedSessions = parsed.every(p => p !== null);
+    if (allNumberedSessions && parts.length >= 3) {
+      const nums = parsed.map(p => p.num);
+      const isContiguous = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1);
+      const prefix = parsed[0].prefix || 'Session';
+      if (isContiguous) {
+        return `${prefix} ${nums[0]}–${nums[nums.length - 1]}`;
+      }
+      return `${parts.length} Sessions`;
+    }
+
+    if (parts.length >= 3) {
+      return `${parts.length} Sessions`;
+    }
+
+    return trimmed;
+  };
+
+  // Calculate cumulative allotted seconds on a DAILY basis (Option B)
+  // A student can log in infinite times within their allocated session/topic on a given day.
+  // If logged in minimum once to a session on a day, that session's allotted time is credited ONCE for that day.
+  const calculateDailyAllottedSecs = (logsList, studentInfoParam, batchInfoParam, activePC = null, filterStartDate = null, filterEndDate = null) => {
+    // Key format: `${dateKey}:::${mode}:::${topicName}:::${sessionName}`
+    const dailySessionMap = new Map();
+    const repeatLogKeySet = new Set();
+
+    (logsList || []).forEach((log, idx) => {
+      const dateKey = getLogLocalDateKey(log.startTime);
+      if (!dateKey) return;
+
+      const sessionName = resolveLogSessionName(log, studentInfoParam, batchInfoParam) || 'Session 1';
+      const topicName = (log.topicName || log.taskDesc || '').trim();
+      const mode = (log.mode || '').trim().toLowerCase();
+      const key = `${dateKey}:::${mode}:::${topicName.toLowerCase()}:::${sessionName.toLowerCase()}`;
+
+      if (!dailySessionMap.has(key)) {
+        const allottedSecs = getLogAllottedSecs(log, studentInfoParam, batchInfoParam);
+        dailySessionMap.set(key, allottedSecs);
+      } else {
+        repeatLogKeySet.add(log.id || `${key}:::${log.startTime || idx}`);
+      }
+    });
+
+    // Check if student currently active on an online workstation
+    if (activePC && activePC.startTime) {
+      const activeDateKey = getLogLocalDateKey(activePC.startTime);
+      const inRange = (!filterStartDate || !filterEndDate) || (activeDateKey >= filterStartDate && activeDateKey <= filterEndDate);
+      if (inRange && activeDateKey) {
+        const activeTopic = (activePC.currentTopic || activePC.currentTask || '').trim();
+        const activeSession = (activePC.currentSession || (Array.isArray(activePC.currentSessionNames) ? activePC.currentSessionNames.join(', ') : '') || 'Session 1').trim();
+        const activeMode = (activePC.currentMode || '').trim().toLowerCase();
+        const activeKey = `${activeDateKey}:::${activeMode}:::${activeTopic.toLowerCase()}:::${activeSession.toLowerCase()}`;
+
+        if (!dailySessionMap.has(activeKey)) {
+          const activeAllotted = getLogAllottedSecs({
+            allottedSecs: activePC.allottedSecs,
+            allottedMinutes: activePC.allottedMinutes,
+            allottedHours: activePC.allottedHours,
+            topicName: activeTopic,
+            sessionNames: activePC.currentSessionNames,
+            sessionName: activeSession,
+            mode: activePC.currentMode,
+            batch: activePC.currentBatch || studentInfoParam?.batch
+          }, studentInfoParam, batchInfoParam);
+          dailySessionMap.set(activeKey, activeAllotted);
+        }
+      }
+    }
+
+    let totalSecs = 0;
+    dailySessionMap.forEach(secs => {
+      totalSecs += secs;
+    });
+
+    return {
+      totalSecs,
+      dailyCount: dailySessionMap.size,
+      repeatLogKeySet
+    };
+  };
+
   // ----------------------------------------------------
   // GENERATE & DOWNLOAD PDF REPORT (A4 portrait size)
   // ----------------------------------------------------
@@ -508,47 +806,34 @@ function MonitoringGrid() {
     const studentInfo = isStudentReport ? studentsList.find(s => (s.name || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase()) : null;
     const batchNameTrimmed = (studentInfo?.batch || '').trim().toLowerCase();
     const batchInfo = isStudentReport ? batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed) : null;
-    const acadGuideline = isStudentReport ? academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed) : null;
-    const topicsHours = isStudentReport ? getTopicsTotalAllocatedHours(acadGuideline?.topics || []) : 0;
-    const anyAcadWithTopics = isStudentReport ? academicSettingsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0) : null;
-    const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
-    const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
 
-    const baseAllottedHoursNum = isStudentReport ? Number(
-      (batchInfo?.useSessionTimes && getSessionTimesTotalHours(batchInfo) > 0)
-        ? getSessionTimesTotalHours(batchInfo)
-        : (
-          getValidNum(studentInfo?.allottedHours) ?? 
-          getValidNum(studentInfo?.allocatedHours) ?? 
-          getValidNum(acadGuideline?.allottedHours) ?? 
-          getValidNum(acadGuideline?.allocatedHours) ?? 
-          getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-          getValidNum(batchInfo?.allottedHours) ?? 
-          getValidNum(batchInfo?.allocatedHours) ?? 
-          (topicsHours > 0 ? topicsHours : null) ?? 
-          fallbackAcadHours ?? 
-          (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
-        )
-    ) : 0;
-    const daysSelected = getSelectedDaysCount(startDate, endDate);
-    const allottedHoursNum = Number((baseAllottedHoursNum * daysSelected).toFixed(2));
-    const allottedSecs = Math.round(allottedHoursNum * 3600);
     const studentLogs = isStudentReport ? logs.filter(l => (l.studentId || l.studentName || '').toLowerCase() === (selectedStudentHistory || '').toLowerCase()) : [];
     const dateFilteredLogs = studentLogs.filter(log => {
-      if (!log.startTime) return false;
-      let dateObj = (log.startTime && typeof log.startTime === 'object' && log.startTime.seconds !== undefined)
-        ? new Date(log.startTime.seconds * 1000)
-        : (log.startTime && typeof log.startTime.toDate === 'function')
-          ? log.startTime.toDate()
-          : new Date(log.startTime);
-      if (isNaN(dateObj.getTime())) return false;
-      const localYear = dateObj.getFullYear();
-      const localMonth = String(dateObj.getMonth() + 1).padStart(2, '0');
-      const localDay = String(dateObj.getDate()).padStart(2, '0');
-      const logLocalDateStr = `${localYear}-${localMonth}-${localDay}`;
-      return logLocalDateStr >= startDate && logLocalDateStr <= endDate;
+      const logLocalDateStr = getLogLocalDateKey(log.startTime);
+      return logLocalDateStr && logLocalDateStr >= startDate && logLocalDateStr <= endDate;
     });
-    const dateFilteredSecs = dateFilteredLogs.reduce((acc, l) => acc + getLogDurationSecs(l), 0);
+
+    // Check if student is currently active on an online workstation
+    const activeOnlinePC = isStudentReport ? computers.find(c => 
+      c.status === 'online' && 
+      (c.currentUser || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase()
+    ) : null;
+
+    let activeOnlineDurationSecs = 0;
+    if (activeOnlinePC && activeOnlinePC.startTime) {
+      const activeDateStr = getLogLocalDateKey(activeOnlinePC.startTime);
+      if (activeDateStr >= startDate && activeDateStr <= endDate) {
+        activeOnlineDurationSecs = Math.max(0, Math.floor((Date.now() - new Date(activeOnlinePC.startTime).getTime()) / 1000));
+      }
+    }
+
+    const dailyReportData = isStudentReport
+      ? calculateDailyAllottedSecs(dateFilteredLogs, studentInfo, batchInfo, activeOnlinePC, startDate, endDate)
+      : { totalSecs: 0 };
+
+    const allottedSecs = dailyReportData.totalSecs;
+    const allottedDisplay = formatSecsToHrsMins(allottedSecs);
+    const dateFilteredSecs = dateFilteredLogs.reduce((acc, l) => acc + getLogDurationSecs(l), 0) + activeOnlineDurationSecs;
     const allTimeSecs = isStudentReport ? dateFilteredSecs : 0;
     const allTimeHrsMins = formatSecsToHrsMins(allTimeSecs);
     const diffSecs = allottedSecs - allTimeSecs;
@@ -686,9 +971,9 @@ function MonitoringGrid() {
             <td class="metadata-value">${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}</td>
           </tr>
           <tr>
-            <td class="metadata-label">Allotted (Selected Session):</td>
-            <td class="metadata-value"><strong>${allottedHoursNum} hr 0 min</strong></td>
-            <td class="metadata-label">Actual (Student Total):</td>
+            <td class="metadata-label">Allotted Time:</td>
+            <td class="metadata-value"><strong>${allottedDisplay}</strong></td>
+            <td class="metadata-label">Used Hours:</td>
             <td class="metadata-value"><strong>${allTimeSecs > 0 ? allTimeHrsMins : totalFilteredHours}</strong></td>
           </tr>
           <tr>
@@ -705,7 +990,7 @@ function MonitoringGrid() {
           <tr>
             <td class="metadata-label">Period:</td>
             <td class="metadata-value">${new Date(startDate).toLocaleDateString()} to ${new Date(endDate).toLocaleDateString()}</td>
-            <td class="metadata-label">Recorded Sessions:</td>
+            <td class="metadata-label">Session Logins:</td>
             <td class="metadata-value">${filteredLogs.length} entries</td>
           </tr>
           <tr>
@@ -717,8 +1002,21 @@ function MonitoringGrid() {
 
         <table class="data-table">
           <thead>
+            ${isStudentReport ? `
             <tr>
-              <th style="width: 18%">${isStudentReport ? 'Workstation ID' : 'Student Name'}</th>
+              <th style="width: 14%">Workstation ID</th>
+              <th style="width: 10%">Date</th>
+              <th style="width: 9%">Login</th>
+              <th style="width: 9%">Logout</th>
+              <th style="width: 10%">Lab Mode</th>
+              <th style="width: 18%">Selected Topic</th>
+              <th style="width: 14%">Allocated Session</th>
+              <th style="width: 8%">Allotted</th>
+              <th style="width: 8%">Actual</th>
+            </tr>
+            ` : `
+            <tr>
+              <th style="width: 18%">Student Name</th>
               <th style="width: 13%">Date</th>
               <th style="width: 13%">Login Time</th>
               <th style="width: 13%">Logout Time</th>
@@ -726,6 +1024,7 @@ function MonitoringGrid() {
               <th style="width: 12%">Total Time</th>
               <th style="width: 18%">Task</th>
             </tr>
+            `}
           </thead>
           <tbody>
     `;
@@ -739,7 +1038,7 @@ function MonitoringGrid() {
     if (sortedFilteredLogs.length === 0) {
       htmlContent += `
         <tr>
-          <td colspan="7" style="text-align: center; color: #64748b; padding: 20px;">
+          <td colspan="${isStudentReport ? 9 : 7}" style="text-align: center; color: #64748b; padding: 20px;">
             No usage logs recorded during the selected date interval.
           </td>
         </tr>
@@ -753,27 +1052,54 @@ function MonitoringGrid() {
         const col1 = isStudentReport ? (log.computerId || 'Unknown') : (log.studentId || 'Unknown');
         const taskText = log.taskDesc || 'N/A';
         
-        htmlContent += `
-          <tr>
-            <td><strong>${col1}</strong></td>
-            <td>${dateStr}</td>
-            <td>${logInStr}</td>
-            <td>${logOutStr}</td>
-            <td>${log.mode || 'N/A'}</td>
-            <td><strong>${hoursUsed}</strong></td>
-            <td>${taskText}</td>
-          </tr>
-        `;
+        if (isStudentReport) {
+          const sessionName = resolveLogSessionName(log, studentInfo, batchInfo);
+          const logAllotted = formatSecsToHrsMins(getLogAllottedSecs(log, studentInfo, batchInfo));
+          const topicText = log.topicName || log.taskDesc || 'General Session';
+          htmlContent += `
+            <tr>
+              <td><strong>${col1}</strong></td>
+              <td>${dateStr}</td>
+              <td>${logInStr}</td>
+              <td>${logOutStr}</td>
+              <td>${log.mode || 'N/A'}</td>
+              <td>${topicText}</td>
+              <td><span style="background: #e0e7ff; color: #4338ca; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 8px;">${sessionName}</span></td>
+              <td style="font-family: monospace; font-weight: bold;">${logAllotted}</td>
+              <td style="font-family: monospace; font-weight: bold; color: #4f46e5;">${hoursUsed}</td>
+            </tr>
+          `;
+        } else {
+          htmlContent += `
+            <tr>
+              <td><strong>${col1}</strong></td>
+              <td>${dateStr}</td>
+              <td>${logInStr}</td>
+              <td>${logOutStr}</td>
+              <td>${log.mode || 'N/A'}</td>
+              <td><strong>${hoursUsed}</strong></td>
+              <td>${taskText}</td>
+            </tr>
+          `;
+        }
       });
     }
 
     htmlContent += `
           </tbody>
           <tfoot>
+            ${isStudentReport ? `
+            <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #6366f1;">
+              <td colspan="7" style="text-align: right; padding: 10px; color: #1e293b;">TOTAL FOR SELECTED SESSIONS (Daily Allocation):</td>
+              <td style="padding: 10px; color: #1e293b; font-family: monospace;"><strong>${allottedDisplay}</strong></td>
+              <td style="padding: 10px; color: #312e81; font-family: monospace;"><strong>${totalFilteredHours}</strong></td>
+            </tr>
+            ` : `
             <tr style="background-color: #f1f5f9; font-weight: bold; border-top: 2px solid #6366f1;">
               <td colspan="5" style="text-align: right; padding: 10px; color: #1e293b;">TOTAL TIME USED:</td>
               <td colspan="2" style="padding: 10px; color: #312e81;"><strong>${totalFilteredHours}</strong></td>
             </tr>
+            `}
           </tfoot>
         </table>
 
@@ -1048,11 +1374,11 @@ function MonitoringGrid() {
                 </div>
 
                 {/* Body: Session details */}
-                <div className="my-4 space-y-2.5 flex-1 flex flex-col justify-center">
+                <div className="my-3 space-y-2 flex-1 flex flex-col justify-center min-w-0">
                   {isOnline ? (
                     <>
                       {/* Student name */}
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <div className="h-6 w-6 rounded-md bg-studio-800 border border-white/5 flex items-center justify-center text-slate-400 shrink-0">
                           <User className="h-3 w-3" />
                         </div>
@@ -1062,18 +1388,21 @@ function MonitoringGrid() {
                       </div>
 
                       {/* Mode Indicator badge */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <div className="px-2 py-0.5 rounded bg-studio-950 border border-white/5 flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 leading-none">
+                      <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                        <div className="px-2 py-0.5 rounded bg-studio-950 border border-white/5 flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 leading-none shrink-0">
                           {getModeIcon(pc.currentMode)}
-                          <span className="truncate max-w-[90px]">{pc.currentMode}</span>
+                          <span className="truncate max-w-[80px]">{pc.currentMode}</span>
                         </div>
                         {pc.currentSession && (
-                          <div className="px-2 py-0.5 rounded bg-studio-accent-purple/15 border border-studio-accent-purple/20 text-studio-accent-purple font-bold text-[9px] leading-none uppercase tracking-wide">
-                            {pc.currentSession}
+                          <div 
+                            className="px-2 py-0.5 rounded bg-studio-accent-purple/15 border border-studio-accent-purple/20 text-studio-accent-purple font-bold text-[9px] leading-none uppercase tracking-wide truncate min-w-0"
+                            title={`${pc.currentSession}${pc.allottedMinutes ? ` • ${pc.allottedMinutes}m allotted` : ''}`}
+                          >
+                            {formatCompactSession(pc.currentSession)}{pc.allottedMinutes ? ` • ${pc.allottedMinutes}m` : ''}
                           </div>
                         )}
                         {pc.isRendering && (
-                          <div className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 flex items-center gap-1 text-[8px] font-extrabold text-amber-300 leading-none animate-pulse" title="15-min idle auto-logout is paused for long render">
+                          <div className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 flex items-center gap-1 text-[8px] font-extrabold text-amber-300 leading-none animate-pulse shrink-0" title="15-min idle auto-logout is paused for long render">
                             <Sparkles className="h-2.5 w-2.5 text-amber-400 animate-spin-slow" />
                             <span>RENDERING</span>
                           </div>
@@ -1234,8 +1563,8 @@ function MonitoringGrid() {
                 <div className="md:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="p-3.5 bg-studio-900 border border-white/5 rounded-2xl flex items-center justify-between">
                     <div>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Total Recorded Sessions</span>
-                      <p className="font-extrabold text-white text-lg mt-0.5">{filteredLogs.length} Sessions</p>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Total Session Logins</span>
+                      <p className="font-extrabold text-white text-lg mt-0.5">{filteredLogs.length} Logins</p>
                     </div>
                     <div className="h-9 w-9 rounded-xl bg-studio-accent-purple/10 flex items-center justify-center text-studio-accent-purple">
                       <Clock className="h-4 w-4" />
@@ -1265,33 +1594,35 @@ function MonitoringGrid() {
                   const studentInfo = studentsList.find(s => (s.name || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase());
                   const batchNameTrimmed = (studentInfo?.batch || '').trim().toLowerCase();
                   const batchInfo = batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === batchNameTrimmed);
-                  const acadGuideline = academicSettingsList.find(a => (a.id || '').trim().toLowerCase() === batchNameTrimmed || (a.batchName || '').trim().toLowerCase() === batchNameTrimmed);
-                  const topicsHours = getTopicsTotalAllocatedHours(acadGuideline?.topics || []);
-                  const anyAcadWithTopics = academicSettingsList.find(a => getTopicsTotalAllocatedHours(a.topics || []) > 0 || Number(a.allottedHours) > 0);
-                  const fallbackTopicsHours = anyAcadWithTopics ? getTopicsTotalAllocatedHours(anyAcadWithTopics.topics || []) : 0;
-                  const fallbackAcadHours = anyAcadWithTopics ? getValidNum(anyAcadWithTopics.allottedHours) : null;
 
-                  const baseAllottedHoursNum = Number(
-                    (batchInfo?.useSessionTimes && getSessionTimesTotalHours(batchInfo) > 0)
-                      ? getSessionTimesTotalHours(batchInfo)
-                      : (
-                        getValidNum(studentInfo?.allottedHours) ?? 
-                        getValidNum(studentInfo?.allocatedHours) ?? 
-                        getValidNum(acadGuideline?.allottedHours) ?? 
-                        getValidNum(acadGuideline?.allocatedHours) ?? 
-                        getValidNum(acadGuideline?.totalAllocatedHours) ?? 
-                        getValidNum(batchInfo?.allottedHours) ?? 
-                        getValidNum(batchInfo?.allocatedHours) ?? 
-                        (topicsHours > 0 ? topicsHours : null) ?? 
-                        fallbackAcadHours ?? 
-                        (fallbackTopicsHours > 0 ? fallbackTopicsHours : 0)
-                      )
+                  // Check if student currently active on an online PC
+                  const activeStudentPC = computers.find(c => 
+                    c.status === 'online' && 
+                    (c.currentUser || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase()
                   );
-                  const daysSelected = getSelectedDaysCount(startDate, endDate);
-                  const allottedHoursNum = Number((baseAllottedHoursNum * daysSelected).toFixed(2));
-                  const allottedSecs = Math.round(allottedHoursNum * 3600);
-                  const actualSecs = totalFilteredSecs;
-                  const actualHrsMins = totalFilteredHours;
+
+                  let activeOnlineDurationSecs = 0;
+                  if (activeStudentPC && activeStudentPC.startTime) {
+                    const activeDateStr = getLogLocalDateKey(activeStudentPC.startTime);
+                    if (activeDateStr >= startDate && activeDateStr <= endDate) {
+                      activeOnlineDurationSecs = Math.max(0, Math.floor((Date.now() - new Date(activeStudentPC.startTime).getTime()) / 1000));
+                    }
+                  }
+
+                  // Calculate daily-basis allotted time (Option B)
+                  const dailyTelemetry = calculateDailyAllottedSecs(
+                    filteredLogs,
+                    studentInfo,
+                    batchInfo,
+                    activeStudentPC,
+                    startDate,
+                    endDate
+                  );
+
+                  const allottedSecs = dailyTelemetry.totalSecs;
+                  const allottedDisplay = formatSecsToHrsMins(allottedSecs);
+                  const actualSecs = totalFilteredSecs + activeOnlineDurationSecs;
+                  const actualHrsMins = formatSecsToHrsMins(actualSecs);
                   const diffSecs = allottedSecs - actualSecs;
 
                   return (
@@ -1305,16 +1636,16 @@ function MonitoringGrid() {
                         <p className="font-medium text-studio-accent-purple mt-0.5">{studentInfo?.batch || 'N/A'}</p>
                       </div>
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Allotted (Selected Session)</span>
-                        <p className="font-bold font-mono text-white mt-0.5">{allottedHoursNum} hr 0 min</p>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Allotted Time</span>
+                        <p className="font-bold font-mono text-white mt-0.5">{allottedDisplay}</p>
                       </div>
                       <div>
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Actual (Student Total)</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Used Hours</span>
                         <p className="font-extrabold font-mono text-studio-accent-purple mt-0.5">{actualHrsMins}</p>
                       </div>
                       <div>
                         <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Time (Lapsed)</span>
-                        <p className={`font-extrabold font-mono mt-0.5 ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Allotted - Actual (for selected date range)">
+                        <p className={`font-extrabold font-mono mt-0.5 ${diffSecs >= 0 ? 'text-emerald-400' : 'text-rose-400'}`} title="Allotted - Actual">
                           {formatSecsToHrsMins(Math.abs(diffSecs))} {diffSecs >= 0 ? 'left' : 'over'}
                         </p>
                       </div>
@@ -1419,23 +1750,31 @@ function MonitoringGrid() {
                         <th className="p-3">Login</th>
                         <th className="p-3">Logout</th>
                         <th className="p-3">Mode</th>
-                        <th className="p-3">Total Time</th>
+                        <th className="p-3">Topic / Session</th>
+                        <th className="p-3">Allotted Time</th>
+                        <th className="p-3">Actual Time</th>
                         <th className="p-3">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {filteredLogs.length === 0 ? (
                         <tr>
-                          <td colSpan="7" className="p-6 text-center text-slate-550 italic">
+                          <td colSpan="9" className="p-6 text-center text-slate-550 italic">
                             No logs found matching selected date interval.
                           </td>
                         </tr>
                       ) : (
                         filteredLogs.map((log, index) => {
-                          const dateStr = log.startTime ? new Date(log.startTime).toLocaleDateString() : 'N/A';
+                          const dateObj = log.startTime ? new Date(log.startTime) : null;
+                          const dateStr = dateObj ? dateObj.toLocaleDateString() : 'N/A';
                           const loginTime = log.startTime ? new Date(log.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A';
                           const logoutTime = log.endTime ? new Date(log.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Active';
                           const hoursUsed = getLogTotalHours(log);
+                          const studentInfoObj = studentsList.find(s => (s.name || '').trim().toLowerCase() === (log.studentId || log.studentName || selectedStudentHistory || '').trim().toLowerCase());
+                          const batchInfoObj = batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === (log.batch || studentInfoObj?.batch || '').trim().toLowerCase());
+                          const sessionName = resolveLogSessionName(log, studentInfoObj, batchInfoObj);
+                          const logAllottedSecs = getLogAllottedSecs(log, studentInfoObj, batchInfoObj);
+                          const topicName = log.topicName || log.taskDesc || 'General Work';
                           
                           return (
                             <tr key={index} className="hover:bg-white/[0.01]">
@@ -1446,6 +1785,17 @@ function MonitoringGrid() {
                               <td className="p-3 text-slate-400">{loginTime}</td>
                               <td className="p-3 text-slate-400">{logoutTime}</td>
                               <td className="p-3 text-slate-300 font-semibold">{log.mode}</td>
+                              <td className="p-3">
+                                <div className="flex flex-col gap-0.5 max-w-[170px]">
+                                  <span className="font-bold text-white text-[11px] truncate" title={topicName}>{topicName}</span>
+                                  <span className="px-1.5 py-0.2 rounded bg-studio-accent-purple/15 text-studio-accent-purple border border-studio-accent-purple/20 text-[8px] font-bold w-fit">
+                                    {sessionName}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="p-3 font-mono font-bold text-slate-300">
+                                {formatSecsToHrsMins(logAllottedSecs)}
+                              </td>
                               <td className="p-3 font-mono font-bold text-studio-accent-purple">{hoursUsed}</td>
                               <td className="p-3">
                                 <span className={`font-bold text-[10px] ${
@@ -1464,8 +1814,16 @@ function MonitoringGrid() {
                     {filteredLogs.length > 0 && (
                       <tfoot className="bg-studio-950 border-t border-white/5">
                         <tr>
-                          <td colSpan="5" className="p-3 text-right font-bold text-[11px] text-slate-400">
-                            TOTAL TIME USED:
+                          <td colSpan="6" className="p-3 text-right font-bold text-[11px] text-slate-400">
+                            {historyTab === 'student' ? 'TOTAL FOR SELECTED SESSIONS (Daily Allocation):' : 'TOTAL TIME USED:'}
+                          </td>
+                          <td className="p-3 font-mono font-extrabold text-white text-xs">
+                            {historyTab === 'student' ? (() => {
+                              const sObj = studentsList.find(s => (s.name || '').trim().toLowerCase() === (selectedStudentHistory || '').trim().toLowerCase());
+                              const bObj = batchesList.find(b => (b.batchName || b.name || '').trim().toLowerCase() === (sObj?.batch || '').trim().toLowerCase());
+                              const { totalSecs } = calculateDailyAllottedSecs(filteredLogs, sObj, bObj, null, startDate, endDate);
+                              return formatSecsToHrsMins(totalSecs);
+                            })() : '-'}
                           </td>
                           <td colSpan="2" className="p-3 font-mono font-extrabold text-emerald-400 text-sm">
                             {totalFilteredHours}

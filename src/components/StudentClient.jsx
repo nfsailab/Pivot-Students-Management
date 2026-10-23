@@ -36,6 +36,143 @@ import {
   CheckCircle2
 } from 'lucide-react';
 
+// Default session timings if none configured in batch
+const DEFAULT_SESSIONS = [
+  { name: 'Session 1', timing: '09:30 AM - 10:25 AM' },
+  { name: 'Session 2', timing: '10:25 AM - 11:20 AM' },
+  { name: 'Session 3', timing: '11:35 AM - 12:30 PM' },
+  { name: 'Session 4', timing: '01:15 PM - 02:10 PM' },
+  { name: 'Session 5', timing: '02:10 PM - 03:05 PM' },
+  { name: 'Session 6', timing: '03:05 PM - 04:15 PM' },
+  { name: 'Session 7', timing: '04:15 PM - 06:15 PM' }
+];
+
+const calculateSessionDuration = (timing) => {
+  if (!timing || typeof timing !== 'string') return 0;
+  const parts = timing.split(/\s*[-–to]+\s*/i);
+  if (parts.length !== 2) {
+    const hrMatch = timing.match(/^(\d+(?:\.\d+)?)\s*(?:hr|hours?|h|mins?|m)?$/i);
+    if (hrMatch) {
+      let n = Number(hrMatch[1]);
+      if (/mins?|m/i.test(timing)) return Math.round(n);
+      return Math.round(n * 60);
+    }
+    return 0;
+  }
+  
+  const parseTime = (str) => {
+    const m = str.trim().match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const ampm = m[3] ? m[3].toUpperCase() : null;
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + min;
+  };
+  
+  const s = parseTime(parts[0]);
+  const e = parseTime(parts[1]);
+  if (s !== null && e !== null) {
+    let diff = e - s;
+    if (diff < 0) diff += 24 * 60;
+    return diff;
+  }
+  return 0;
+};
+
+const normalizeSessions = (sessions) => {
+  if (!sessions || !Array.isArray(sessions) || sessions.length === 0) return DEFAULT_SESSIONS;
+  return sessions.map((s, idx) => {
+    if (typeof s === 'string') {
+      return { name: `Session ${idx + 1}`, timing: s };
+    }
+    if (s && typeof s === 'object') {
+      return {
+        name: s.name || `Session ${idx + 1}`,
+        timing: s.timing || s.time || ''
+      };
+    }
+    return { name: `Session ${idx + 1}`, timing: '' };
+  });
+};
+
+const calculateCombinedSessionsDuration = (sessionNames, availableSessions) => {
+  if (!sessionNames) return 0;
+  const namesArr = Array.isArray(sessionNames) ? sessionNames : [sessionNames];
+  if (namesArr.length === 0) return 0;
+  let totalMins = 0;
+  const normAvailable = normalizeSessions(availableSessions);
+  for (const name of namesArr) {
+    if (!name) continue;
+    const sObj = normAvailable.find(s => s && s.name && s.name.trim().toLowerCase() === String(name).trim().toLowerCase());
+    if (sObj && sObj.timing) {
+      totalMins += calculateSessionDuration(sObj.timing);
+    }
+  }
+  return totalMins;
+};
+
+// Helper to extract session end time in minutes from midnight (0..1439)
+const getTopicEndMinutesOfDay = (item, batchName, batchesList) => {
+  if (!item) return null;
+
+  let timingStr = '';
+  if (typeof item === 'object' && item.timing) {
+    timingStr = item.timing;
+  }
+
+  const currentBatch = (batchesList || []).find(
+    b => (b.batchName || b.name || '').trim().toLowerCase() === String(batchName || '').trim().toLowerCase()
+  );
+  const rawSessions = (currentBatch?.sessionTimes && Array.isArray(currentBatch.sessionTimes) && currentBatch.sessionTimes.length > 0)
+    ? currentBatch.sessionTimes
+    : DEFAULT_SESSIONS;
+  const availableSessions = normalizeSessions(rawSessions);
+
+  if (typeof item === 'object' && (item.sessionNames || item.sessionName)) {
+    const names = Array.isArray(item.sessionNames)
+      ? item.sessionNames
+      : String(item.sessionName).split(',').map(s => s.trim()).filter(Boolean);
+
+    const matched = names
+      .map(n => availableSessions.find(s => s && s.name && s.name.trim().toLowerCase() === String(n).trim().toLowerCase()))
+      .filter(Boolean);
+
+    if (matched.length > 0 && matched[matched.length - 1].timing) {
+      timingStr = matched[matched.length - 1].timing;
+    }
+  }
+
+  if (!timingStr || typeof timingStr !== 'string') return null;
+
+  const parts = timingStr.split(/\s*[-–to]+\s*/i);
+  if (parts.length < 2) return null;
+
+  const endTimePart = parts[1].trim();
+  const m = endTimePart.match(/^(\d+)(?::(\d+))?\s*(AM|PM)?$/i);
+  if (!m) return null;
+
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const ampm = m[3] ? m[3].toUpperCase() : null;
+
+  if (ampm === 'PM' && h < 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+
+  return h * 60 + min;
+};
+
+// Check if a topic's scheduled session time has passed today
+const isTopicSessionExpired = (item, batchName, batchesList) => {
+  const endMinutes = getTopicEndMinutesOfDay(item, batchName, batchesList);
+  if (endMinutes === null) return false;
+
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return currentMinutes >= endMinutes;
+};
+
 function StudentClient({ onSessionStateChange }) {
   // Database configuration states
   const [batches, setBatches] = useState([]);
@@ -46,7 +183,7 @@ function StudentClient({ onSessionStateChange }) {
   // Batch specific settings collections
   const [acadConfigsList, setAcadConfigsList] = useState([]);
   const [prodConfigsList, setProdConfigsList] = useState([]);
-  const [resConfig, setResConfig] = useState(null);
+  const [resConfigsList, setResConfigsList] = useState([]);
   const [genaiConfigsList, setGenaiConfigsList] = useState([]);
   const [logsList, setLogsList] = useState([]);
   const [workstationsList, setWorkstationsList] = useState([]);
@@ -71,10 +208,8 @@ function StudentClient({ onSessionStateChange }) {
   const [selectedMode, setSelectedMode] = useState('Academic');
   const [todayWork, setTodayWork] = useState('');
   const [selectedTopicObj, setSelectedTopicObj] = useState(null);
-
-  useEffect(() => {
-    setSelectedTopicObj(null);
-  }, [selectedMode, selectedBatch]);
+  const [selectedTopicIndex, setSelectedTopicIndex] = useState(null);
+  const [loginClockTick, setLoginClockTick] = useState(Date.now());
 
   // Session State
   const [activeSession, setActiveSession] = useState(() => {
@@ -94,6 +229,28 @@ function StudentClient({ onSessionStateChange }) {
   const [concurrencyError, setConcurrencyError] = useState('');
   const [isRendering, setIsRendering] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
+
+  useEffect(() => {
+    setSelectedTopicObj(null);
+    setSelectedTopicIndex(null);
+  }, [selectedMode, selectedBatch]);
+
+  // Periodic ticker for login screen (every 15s) to update session expiry in real-time
+  useEffect(() => {
+    if (activeSession) return;
+    const interval = setInterval(() => {
+      setLoginClockTick(Date.now());
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [activeSession]);
+
+  // Automatically deselect if active selection has expired while sitting on the login screen
+  useEffect(() => {
+    if (selectedTopicObj && isTopicSessionExpired(selectedTopicObj, selectedBatch, batches)) {
+      setSelectedTopicObj(null);
+      setSelectedTopicIndex(null);
+    }
+  }, [loginClockTick, selectedTopicObj, selectedBatch, batches]);
 
   // Messaging & UI States
   const [isMinimized, setIsMinimized] = useState(false);
@@ -471,7 +628,7 @@ function StudentClient({ onSessionStateChange }) {
     });
 
     const unsubRes = subscribeCollection('settings_research', (data) => {
-      if (data && data.length > 0) setResConfig(data[0]);
+      setResConfigsList(data || []);
     });
 
     const unsubGenai = subscribeCollection('settings_genai', (data) => {
@@ -975,55 +1132,68 @@ function StudentClient({ onSessionStateChange }) {
     instructions: 'Execute independent GenAI workflows.'
   };
 
-  const getSessionEndTime = () => {
+  const activeRes = resConfigsList.find(c => c.id === effectiveBatchForConfig) || resConfigsList.find(c => c.id === 'config') || {
+    assignmentTopics: [],
+    instructions: 'Follow faculty guidance.'
+  };
+
+  const getSessionEndTime = (topicObjParam, durMinsParam) => {
     let slotStr = '';
-    if (selectedTopicObj && selectedTopicObj.timing) {
-      slotStr = selectedTopicObj.timing;
+    const topic = topicObjParam || selectedTopicObj;
+    if (topic && topic.timing) {
+      slotStr = topic.timing;
+    } else if (topic && (topic.sessionNames || topic.sessionName)) {
+      const names = Array.isArray(topic.sessionNames) ? topic.sessionNames : String(topic.sessionName).split(',').map(s => s.trim());
+      const currentBatch = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === String(selectedBatch || '').trim().toLowerCase());
+      const sessions = normalizeSessions(currentBatch?.sessionTimes);
+      const matched = names.map(n => sessions.find(s => s.name === n)).filter(Boolean);
+      if (matched.length > 0 && matched[matched.length - 1].timing) {
+        slotStr = matched[matched.length - 1].timing;
+      }
     } else if (selectedMode.toLowerCase() === 'academic') {
       slotStr = activeAcad.timeslot;
     } else if (selectedMode.toLowerCase() === 'production') {
       const firstProj = activeProd.projects?.[0];
       slotStr = firstProj ? firstProj.timing : '02:00 PM - 06:00 PM';
     } else if (selectedMode.toLowerCase() === 'research') {
-      const firstTopic = resConfig?.assignmentTopics?.[0];
+      const firstTopic = activeRes?.assignmentTopics?.[0];
       slotStr = firstTopic ? firstTopic.timing : '09:00 AM - 01:00 PM';
     } else if (selectedMode.toLowerCase() === 'nail, genai lab' || selectedMode.toLowerCase() === 'genai lab') {
       const firstProj = activeGenai.projects?.[0];
       slotStr = firstProj ? firstProj.timing : '09:00 AM - 01:00 PM';
-    } else {
-      return null;
     }
 
-    if (!slotStr || slotStr === 'N/A') return null;
+    if (slotStr && slotStr !== 'N/A') {
+      try {
+        const parts = slotStr.split(' - ');
+        if (parts.length === 2) {
+          const endTimePart = parts[1].trim();
+          const match = endTimePart.match(/(\d+):(\d+)\s*(AM|PM)/i);
+          if (match) {
+            let hours = parseInt(match[1]);
+            const minutes = parseInt(match[2]);
+            const ampm = match[3].toUpperCase();
 
-    try {
-      const parts = slotStr.split(' - ');
-      if (parts.length !== 2) return null;
-      
-      const endTimePart = parts[1].trim();
-      const match = endTimePart.match(/(\d+):(\d+)\s*(AM|PM)/i);
-      if (!match) return null;
+            if (ampm === 'PM' && hours < 12) hours += 12;
+            if (ampm === 'AM' && hours === 12) hours = 0;
 
-      let hours = parseInt(match[1]);
-      const minutes = parseInt(match[2]);
-      const ampm = match[3].toUpperCase();
+            const target = new Date();
+            target.setHours(hours, minutes, 0, 0);
 
-      if (ampm === 'PM' && hours < 12) hours += 12;
-      if (ampm === 'AM' && hours === 12) hours = 0;
-
-      const target = new Date();
-      target.setHours(hours, minutes, 0, 0);
-
-      // If the scheduled slot end time has already elapsed today, do not set an expired
-      // target (which would trigger an immediate 0-second force-logout alert on login).
-      if (target.getTime() <= Date.now()) {
-        return null;
+            // If target is in the future today, use it
+            if (target.getTime() > Date.now()) {
+              return target;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing session end time:', e);
       }
-      return target;
-    } catch (e) {
-      console.error('Error parsing session end time:', e);
-      return null;
     }
+
+    // Fallback: countdown based on allotted duration from now
+    const durationMinutes = durMinsParam || 55;
+    return new Date(Date.now() + durationMinutes * 60 * 1000);
   };
 
   // ----------------------------------------------------
@@ -1082,19 +1252,28 @@ function StudentClient({ onSessionStateChange }) {
     }
 
     // MANDATORY GUIDELINE SELECTION: Check if guidelines/topics exist and enforce selection
-    let availableGuidelinesCount = 0;
-    if (selectedMode.toLowerCase() === 'academic') {
-      availableGuidelinesCount = (activeAcad?.topics || []).length;
-    } else if (selectedMode.toLowerCase() === 'production') {
-      availableGuidelinesCount = (activeProd?.projects || []).length;
-    } else if (selectedMode.toLowerCase() === 'research') {
-      availableGuidelinesCount = (resConfig?.assignmentTopics || []).length;
-    } else if (selectedMode.toLowerCase() === 'genai lab' || selectedMode.toLowerCase() === 'nail, genai lab') {
-      availableGuidelinesCount = (activeGenai?.projects || []).length;
+    let currentModeItems = [];
+    const modeKey = (selectedMode || '').toLowerCase();
+    if (modeKey === 'academic') currentModeItems = activeAcad?.topics || [];
+    else if (modeKey === 'production') currentModeItems = activeProd?.projects || [];
+    else if (modeKey === 'research') currentModeItems = activeRes?.assignmentTopics || [];
+    else if (modeKey === 'genai lab' || modeKey === 'nail, genai lab') currentModeItems = activeGenai?.projects || [];
+
+    const activeGuidelines = currentModeItems.filter(item => !isTopicSessionExpired(item, selectedBatch, batches));
+
+    // Option B: If all registered sessions for this mode have concluded today, strictly prevent login
+    if (currentModeItems.length > 0 && activeGuidelines.length === 0) {
+      alert(`All scheduled sessions for ${selectedMode} have concluded for today. Please contact your instructor or HOD.`);
+      return;
     }
 
-    if (availableGuidelinesCount > 0 && !selectedTopicObj) {
-      alert(`You must select at least one ${selectedMode} guideline/topic from the bulletin board on the right before logging in (even if you typed on Today's Work).`);
+    if (activeGuidelines.length > 0 && !selectedTopicObj) {
+      alert(`You must select an active ${selectedMode} guideline/topic from the bulletin board on the right before logging in (even if you typed on Today's Work).`);
+      return;
+    }
+
+    if (selectedTopicObj && isTopicSessionExpired(selectedTopicObj, selectedBatch, batches)) {
+      alert("The scheduled time for this session is over. Please select an active session.");
       return;
     }
 
@@ -1137,8 +1316,20 @@ function StudentClient({ onSessionStateChange }) {
 
     setIsSubmittingSession(true);
 
-    const topicName = selectedTopicObj ? (typeof selectedTopicObj === 'string' ? selectedTopicObj : (selectedTopicObj.name || '')) : '';
-    const sessionTaskDesc = (todayWork || '').trim() || topicName;
+    let topicObjToUse = selectedTopicObj;
+    if (!topicObjToUse && currentModeItems.length > 0) {
+      const taskText = (todayWork || '').trim().toLowerCase();
+      const matched = currentModeItems.find(i => (typeof i === 'string' ? i : (i.name || '')).trim().toLowerCase() === taskText);
+      topicObjToUse = matched || currentModeItems[0];
+    }
+
+    const topicName = topicObjToUse ? (typeof topicObjToUse === 'string' ? topicObjToUse : (topicObjToUse.name || '')) : '';
+    const sessionTaskDesc = (todayWork || '').trim() || topicName || 'General Lab Work';
+    const topicDurInfo = getTopicAllocatedDuration(topicObjToUse, selectedBatch);
+    const topicSessionDisplay = resolveSessionDisplay(topicObjToUse, selectedBatch);
+    const sessionNamesArr = topicObjToUse && Array.isArray(topicObjToUse.sessionNames) && topicObjToUse.sessionNames.length > 0
+      ? topicObjToUse.sessionNames
+      : (topicObjToUse?.sessionName ? String(topicObjToUse.sessionName).split(',').map(s => s.trim()).filter(Boolean) : [topicSessionDisplay]);
 
     const sessionData = {
       computerId: selectedPC,
@@ -1146,6 +1337,13 @@ function StudentClient({ onSessionStateChange }) {
       studentBatch: selectedBatch,
       mode: selectedMode,
       taskDesc: sessionTaskDesc,
+      topicName: topicName || sessionTaskDesc,
+      sessionNames: sessionNamesArr,
+      sessionName: topicSessionDisplay,
+      timing: topicObjToUse?.timing || '',
+      allottedMinutes: topicDurInfo.durationMins,
+      allottedHours: topicDurInfo.hoursNum,
+      allottedSecs: topicDurInfo.durationSecs,
       startTime: new Date().toISOString()
     };
 
@@ -1156,6 +1354,12 @@ function StudentClient({ onSessionStateChange }) {
         currentBatch: selectedBatch,
         currentMode: selectedMode,
         currentTask: sessionTaskDesc,
+        currentTopic: topicName || sessionTaskDesc,
+        currentSession: topicSessionDisplay,
+        currentSessionNames: sessionNamesArr,
+        allottedMinutes: topicDurInfo.durationMins,
+        allottedHours: topicDurInfo.hoursNum,
+        allottedSecs: topicDurInfo.durationSecs,
         startTime: sessionData.startTime,
         lastActive: new Date().toISOString(),
         lastLogoutStatus: null,
@@ -1175,7 +1379,7 @@ function StudentClient({ onSessionStateChange }) {
       setConcurrencyError('');
       
       // Calculate session end time and reset alerts
-      const targetEndTime = getSessionEndTime();
+      const targetEndTime = getSessionEndTime(topicObjToUse, topicDurInfo.durationMins);
       setSessionEndTime(targetEndTime);
       setAlertTriggered({
         hour: false,
@@ -1307,9 +1511,18 @@ function StudentClient({ onSessionStateChange }) {
       // 2. Prepare offline log queue item so data is NEVER lost regardless of connectivity
       const logData = {
         studentId: session.studentName,
+        studentName: session.studentName,
         computerId: session.computerId,
+        batch: session.studentBatch,
         mode: session.mode,
         taskDesc: session.taskDesc,
+        topicName: session.topicName || session.taskDesc,
+        sessionNames: session.sessionNames || [],
+        sessionName: session.sessionName || (Array.isArray(session.sessionNames) ? session.sessionNames.join(', ') : ''),
+        timing: session.timing || '',
+        allottedMinutes: session.allottedMinutes || 0,
+        allottedHours: session.allottedHours || 0,
+        allottedSecs: session.allottedSecs || 0,
         startTime: session.startTime,
         endTime: new Date().toISOString(),
         status: logoutStatus,
@@ -1350,6 +1563,7 @@ function StudentClient({ onSessionStateChange }) {
       }
       setSelectedMode('Academic');
       setSelectedTopicObj(null);
+      setSelectedTopicIndex(null);
       setLastMsgId(null);
       setActiveMessage(null);
       setHasReadActiveMessage(false);
@@ -1478,11 +1692,55 @@ function StudentClient({ onSessionStateChange }) {
       return item.sessionName.trim();
     }
     if (item.timing) {
-      const currentBatch = batches.find(b => b.batchName === batchName);
+      const currentBatch = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === String(batchName || '').trim().toLowerCase());
       const matched = (currentBatch?.sessionTimes || []).find(s => s.timing === item.timing);
       if (matched?.name) return matched.name;
     }
     return 'Session 1';
+  };
+
+  // Calculate exact allocated duration for a topic based on sessions assigned by HOD
+  const getTopicAllocatedDuration = (item, batchName) => {
+    if (!item) return { durationMins: 55, durationSecs: 3300, hoursNum: 0.92, durationStr: '55 min' };
+    
+    const currentBatch = batches.find(b => (b.batchName || b.name || '').trim().toLowerCase() === String(batchName || '').trim().toLowerCase());
+    const rawSessions = (currentBatch?.sessionTimes && Array.isArray(currentBatch.sessionTimes) && currentBatch.sessionTimes.length > 0)
+      ? currentBatch.sessionTimes
+      : DEFAULT_SESSIONS;
+    const availableSessions = normalizeSessions(rawSessions);
+
+    let totalMins = 0;
+
+    if (typeof item === 'object') {
+      if (Array.isArray(item.sessionNames) && item.sessionNames.length > 0) {
+        totalMins = calculateCombinedSessionsDuration(item.sessionNames, availableSessions);
+      } else if (item.sessionName && typeof item.sessionName === 'string' && item.sessionName.trim()) {
+        const names = item.sessionName.split(',').map(s => s.trim()).filter(Boolean);
+        totalMins = calculateCombinedSessionsDuration(names, availableSessions);
+      }
+
+      if (totalMins === 0 && item.timing) {
+        totalMins = calculateSessionDuration(item.timing);
+      }
+
+      if (totalMins === 0 && (item.allottedHours || item.durationHours || item.hours)) {
+        const val = Number(item.allottedHours ?? item.durationHours ?? item.hours);
+        if (!isNaN(val) && val > 0) totalMins = Math.round(val * 60);
+      }
+    }
+
+    if (totalMins === 0 && availableSessions.length > 0 && availableSessions[0].timing) {
+      totalMins = calculateSessionDuration(availableSessions[0].timing) || 55;
+    }
+    if (totalMins === 0) totalMins = 55;
+
+    const durationSecs = totalMins * 60;
+    const hoursNum = Number((totalMins / 60).toFixed(2));
+    const hrs = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+    const durationStr = hrs > 0 ? (mins > 0 ? `${hrs} hr ${mins} min` : `${hrs} hr`) : `${mins} min`;
+
+    return { durationMins: totalMins, durationSecs, hoursNum, durationStr };
   };
 
   // Resolve category (e.g., SAX, Pre Production, Production, Observation Report, GenAI Project)
@@ -1498,7 +1756,8 @@ function StudentClient({ onSessionStateChange }) {
       }
     }
     if (item.taskType && item.taskType.trim()) {
-      return item.taskType.trim();
+      const trimmed = item.taskType.trim();
+      return trimmed === 'Analysis Report' ? 'General' : trimmed;
     }
     switch ((modeName || '').toLowerCase()) {
       case 'academic': return 'SAX';
@@ -1533,11 +1792,11 @@ function StudentClient({ onSessionStateChange }) {
       emptyMessage = 'No projects registered for this batch.';
       instructions = activeProd.instructions || 'Execute assigned production shots and tasks.';
     } else if (modeKey === 'research') {
-      items = resConfig?.assignmentTopics || [];
+      items = activeRes?.assignmentTopics || [];
       sectionTitle = 'AVAILABLE RESEARCH TOPICS (SELECT ONE)';
-      emptyMessage = 'No research topics registered.';
-      instructions = (resConfig?.instructions && !resConfig.instructions.includes('Research current state-of-the-art') && !resConfig.instructions.includes('industry papers') && !resConfig.instructions.includes('Conduct thorough observations')) 
-        ? resConfig.instructions 
+      emptyMessage = 'No research topics registered for this batch.';
+      instructions = (activeRes?.instructions && !activeRes.instructions.includes('Research current state-of-the-art') && !activeRes.instructions.includes('industry papers') && !activeRes.instructions.includes('Conduct thorough observations')) 
+        ? activeRes.instructions 
         : 'Follow faculty guidance.';
     } else if (modeKey === 'genai lab' || modeKey === 'nail, genai lab') {
       items = activeGenai.projects || [];
@@ -1564,54 +1823,90 @@ function StudentClient({ onSessionStateChange }) {
               <div className="space-y-2 mt-2 max-h-60 overflow-y-auto pr-1">
                 {items.length === 0 ? (
                   <p className="text-[10px] text-slate-500 italic py-2">{emptyMessage}</p>
-                ) : (
-                  items.map((item, i) => {
-                    const name = typeof item === 'string' ? item : (item.name || 'Unnamed Topic');
-                    const sessionDisplay = resolveSessionDisplay(item, selectedBatch);
-                    const category = resolveCategory(item, selectedMode);
-                    const isSelected = selectedTopicObj && (selectedTopicObj.name || selectedTopicObj) === name;
-
-                    return (
-                      <button
-                        type="button"
-                        key={i}
-                        onClick={() => {
-                          setSelectedTopicObj(item);
-                        }}
-                        className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 ${
-                          isSelected
-                            ? `${theme.selectedBg} ${theme.selectedBorder} ring-1 ${theme.selectedRing} text-white shadow-lg`
-                            : 'bg-studio-950/70 border-white/5 hover:border-white/20 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex justify-between items-center w-full gap-2">
-                          <span className="font-bold text-[11px] text-white tracking-wide truncate">{name}</span>
-                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 transition-colors ${
-                            isSelected
-                              ? theme.badgeSelectedBg
-                              : 'bg-slate-800/80 hover:bg-slate-700/80 text-slate-300'
-                          }`}>
-                            {isSelected ? '✓ Selected' : 'Select'}
-                          </span>
+                ) : (() => {
+                  const allExpired = items.every(item => isTopicSessionExpired(item, selectedBatch, batches));
+                  return (
+                    <>
+                      {allExpired && (
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-medium flex items-center gap-2 mb-2">
+                          <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" />
+                          <span>All scheduled sessions for today have concluded.</span>
                         </div>
-                        {(category || sessionDisplay) && (
-                          <div className="flex items-center gap-2 text-[9px] font-mono mt-0.5 flex-wrap">
-                            {category && (
-                              <span className={`${theme.categoryText} font-bold uppercase inline-flex items-center justify-center shrink-0`}>
-                                {category}
+                      )}
+                      {items.map((item, i) => {
+                        const name = typeof item === 'string' ? item : (item.name || 'Unnamed Topic');
+                        const sessionDisplay = resolveSessionDisplay(item, selectedBatch);
+                        const topicDur = getTopicAllocatedDuration(item, selectedBatch);
+                        const category = resolveCategory(item, selectedMode);
+                        const isExpired = isTopicSessionExpired(item, selectedBatch, batches);
+                        const isSelected = !isExpired && (selectedTopicIndex !== null
+                          ? selectedTopicIndex === i
+                          : Boolean(
+                              selectedTopicObj && (
+                                selectedTopicObj === item ||
+                                (
+                                  (typeof item === 'string' ? item : item.name) === (typeof selectedTopicObj === 'string' ? selectedTopicObj : selectedTopicObj.name) &&
+                                  resolveSessionDisplay(selectedTopicObj, selectedBatch) === sessionDisplay &&
+                                  (selectedTopicObj.timing || '') === (item.timing || '')
+                                )
+                              )
+                            ));
+
+                        return (
+                          <button
+                            type="button"
+                            key={i}
+                            disabled={isExpired}
+                            onClick={() => {
+                              if (isExpired) return;
+                              if (isSelected) {
+                                setSelectedTopicObj(null);
+                                setSelectedTopicIndex(null);
+                              } else {
+                                setSelectedTopicObj(item);
+                                setSelectedTopicIndex(i);
+                              }
+                            }}
+                            className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1.5 ${
+                              isExpired
+                                ? 'opacity-40 cursor-not-allowed bg-studio-950/40 border-white/5 text-slate-500'
+                                : isSelected
+                                ? `${theme.selectedBg} ${theme.selectedBorder} ring-1 ${theme.selectedRing} text-white shadow-lg`
+                                : 'bg-studio-950/70 border-white/5 hover:border-white/20 text-slate-300'
+                            }`}
+                          >
+                            <div className="flex justify-between items-center w-full gap-2">
+                              <span className={`font-bold text-[11px] tracking-wide truncate ${isExpired ? 'text-slate-500' : 'text-white'}`}>{name}</span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shrink-0 transition-colors ${
+                                isExpired
+                                  ? 'bg-rose-500/10 text-rose-400/80 border border-rose-500/20'
+                                  : isSelected
+                                  ? theme.badgeSelectedBg
+                                  : 'bg-slate-800/80 hover:bg-slate-700/80 text-slate-300'
+                              }`}>
+                                {isExpired ? 'Session Over' : isSelected ? `✓ Selected • ${topicDur.durationStr}` : `Select • ${topicDur.durationStr}`}
                               </span>
+                            </div>
+                            {(category || sessionDisplay) && (
+                              <div className="flex items-center gap-2 text-[9px] font-mono mt-0.5 flex-wrap">
+                                {category && (
+                                  <span className={`${isExpired ? 'text-slate-600' : theme.categoryText} font-bold uppercase inline-flex items-center justify-center shrink-0`}>
+                                    {category}
+                                  </span>
+                                )}
+                                {sessionDisplay && (
+                                  <span className={`px-2 py-0.5 rounded border ${isExpired ? 'border-white/5 bg-white/5 text-slate-600' : `${theme.pillBorder} ${theme.pillBg} ${theme.pillText}`} font-bold text-[8px] inline-flex items-center justify-center`}>
+                                    {sessionDisplay} ({topicDur.durationStr})
+                                  </span>
+                                )}
+                              </div>
                             )}
-                            {sessionDisplay && (
-                              <span className={`px-2 py-0.5 rounded border ${theme.pillBorder} ${theme.pillBg} ${theme.pillText} font-bold text-[8px] inline-flex items-center justify-center`}>
-                                {sessionDisplay}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })
-                )}
+                          </button>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
@@ -1749,6 +2044,20 @@ function StudentClient({ onSessionStateChange }) {
                 <p className="text-[11px] text-slate-550 font-medium">
                   {activeSession.studentBatch} | <span className={`${theme.text} font-semibold`}>{activeSession.mode}</span>
                 </p>
+                {(activeSession.topicName || activeSession.sessionName) && (
+                  <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                    {activeSession.topicName && (
+                      <span className="px-2 py-0.5 rounded bg-studio-950 border border-white/5 text-[9px] font-bold text-white">
+                        Topic: {activeSession.topicName}
+                      </span>
+                    )}
+                    {activeSession.sessionName && (
+                      <span className={`px-2 py-0.5 rounded border ${theme.pillBorder} ${theme.pillBg} ${theme.pillText} font-bold text-[9px]`}>
+                        {activeSession.sessionName} &bull; {formatTime(activeSession.allottedSecs || (activeSession.allottedMinutes ? activeSession.allottedMinutes * 60 : 3300))} Allotted
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Live Stopwatch Clock */}
@@ -1850,8 +2159,8 @@ function StudentClient({ onSessionStateChange }) {
                       items = activeProd.projects || [];
                       instructions = activeProd.instructions || 'Execute assigned production shots and tasks.';
                     } else if (modeKey === 'research') {
-                      items = resConfig?.assignmentTopics || [];
-                      instructions = (resConfig?.instructions && !resConfig.instructions.includes('Research current state-of-the-art') && !resConfig.instructions.includes('industry papers') && !resConfig.instructions.includes('Conduct thorough observations')) ? resConfig.instructions : '';
+                      items = activeRes?.assignmentTopics || [];
+                      instructions = (activeRes?.instructions && !activeRes.instructions.includes('Research current state-of-the-art') && !activeRes.instructions.includes('industry papers') && !activeRes.instructions.includes('Conduct thorough observations')) ? activeRes.instructions : '';
                     } else if (modeKey === 'genai lab' || modeKey === 'nail, genai lab') {
                       items = activeGenai.projects || [];
                       instructions = activeGenai.instructions || 'Execute independent GenAI workflows.';
@@ -1867,6 +2176,7 @@ function StudentClient({ onSessionStateChange }) {
                             items.map((item, idx) => {
                               const name = typeof item === 'string' ? item : (item.name || 'Unnamed Topic');
                               const sessionDisplay = resolveSessionDisplay(item, activeSession.studentBatch);
+                              const topicDur = getTopicAllocatedDuration(item, activeSession.studentBatch);
                               const category = resolveCategory(item, activeSession.mode);
 
                               return (
@@ -1881,7 +2191,7 @@ function StudentClient({ onSessionStateChange }) {
                                       )}
                                       {sessionDisplay && (
                                         <span className={`px-1.5 py-0.5 rounded border ${theme.pillBorder} ${theme.pillBg} ${theme.pillText} font-bold text-[8px] inline-flex items-center justify-center`}>
-                                          {sessionDisplay}
+                                          {sessionDisplay} ({topicDur.durationStr})
                                         </span>
                                       )}
                                     </div>
@@ -2353,6 +2663,59 @@ function StudentClient({ onSessionStateChange }) {
                 className="w-full h-16 px-3.5 py-2 rounded-xl studio-input text-slate-150 placeholder:text-slate-700 text-xs resize-none"
               />
             </div>
+
+            {/* Selected Topic & Session Allotted Indicator */}
+            {selectedTopicObj ? (() => {
+              const topicDur = getTopicAllocatedDuration(selectedTopicObj, selectedBatch);
+              const sessionDisplay = resolveSessionDisplay(selectedTopicObj, selectedBatch);
+              const name = typeof selectedTopicObj === 'string' ? selectedTopicObj : (selectedTopicObj.name || 'Selected Topic');
+              return (
+                <div className="p-3 bg-studio-accent-purple/10 border border-studio-accent-purple/30 rounded-xl flex items-center justify-between gap-2 animate-fade-in">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="h-7 w-7 rounded-lg bg-studio-accent-purple/20 text-studio-accent-purple flex items-center justify-center shrink-0">
+                      <Clock className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-white text-xs truncate">{name}</p>
+                      <p className="text-[10px] text-studio-accent-purple font-medium">
+                        Allocated: <span className="font-bold">{sessionDisplay}</span> &bull; Allotted: <span className="font-bold text-white font-mono">{topicDur.durationStr}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTopicObj(null);
+                      setSelectedTopicIndex(null);
+                    }}
+                    className="px-2 py-1 text-[9px] font-bold text-slate-400 hover:text-white rounded border border-white/10 hover:bg-white/5 transition shrink-0"
+                  >
+                    Clear
+                  </button>
+                </div>
+              );
+            })() : (() => {
+              const currentModeItemsForInd = selectedMode.toLowerCase() === 'academic' ? (activeAcad?.topics || [])
+                : selectedMode.toLowerCase() === 'production' ? (activeProd?.projects || [])
+                : selectedMode.toLowerCase() === 'research' ? (activeRes?.assignmentTopics || [])
+                : (activeGenai?.projects || []);
+              const allConcluded = currentModeItemsForInd.length > 0 && currentModeItemsForInd.every(item => isTopicSessionExpired(item, selectedBatch, batches));
+
+              return (
+                <div className="p-2.5 bg-studio-950/60 border border-white/5 rounded-xl text-center">
+                  <p className="text-[10px] text-slate-400">
+                    {allConcluded ? (
+                      <span className="text-rose-400 font-semibold flex items-center justify-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                        All scheduled {selectedMode} sessions for today have concluded.
+                      </span>
+                    ) : (
+                      <>Select an active topic from the <strong className="text-slate-200">{selectedMode} Guidelines</strong> on the right to set your session allotted time.</>
+                    )}
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Submit button */}
             <button
